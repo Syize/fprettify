@@ -1,14 +1,37 @@
 [build-system]
-requires = [
-    "setuptools >= 45",
-    "wheel",
-    "setuptools_scm[toml] >= 6.2",
-    "setuptools_scm_git_archive",
-]
-build-backend = "setuptools.build_meta"
+requires = ["meson-python"]
+build-backend = "mesonpy"
 
-[tool.setuptools_scm]
-write_to = "fprettify/_version.py"
+[project]
+name = "fprettify"
+version = "0.3.7"
+readme = "README.md"
+license = { text = "GPLv3" }
+requires-python = ">=3.8"
+authors = [{ name = "Patrick Seewald", email = "patrick.seewald@gmail.com" }]
+maintainers = [
+    { name = "Patrick Seewald", email = "patrick.seewald@gmail.com" },
+]
+keywords = ["fortran", "formatter"]
+description = "auto-formatter for modern fortran source code"
+dependencies = []
+
+[project.urls]
+homepage = "https://github.com/pseewald/fprettify"
+repository = "https://github.com/pseewald/fprettify"
+documentation = "https://github.com/pseewald/fprettify"
+"Bug Tracker" = "https://github.com/pseewald/fprettify/issues"
+
+[project.scripts]
+fprettify = "fprettify__init__:run"
 
 [tool.isort]
 profile = "black"
+
+[dependency-groups]
+dev = [
+    "black>=24.8.0",
+    "coveralls>=4.0.1",
+    "isort>=5.13.2",
+    "pre-commit>=3.5.0",
+]
