@@ -100,3 +100,6 @@ fortran_tests/
 
 # PyCharm
 .idea/
+
+uv.lock
+.vscode/
