@@ -19,34 +19,9 @@
 
 """This is a collection of Fortran parsing utilities."""
 
-import re
 from collections import deque
 
-RE_FLAGS = re.IGNORECASE | re.UNICODE
-
-# FIXME bad ass regex!
-VAR_DECL_RE = re.compile(
-    r"^ *(?P<type>integer(?: *\* *[0-9]+)?|logical|character(?: *\* *[0-9]+)?|real(?: *\* *[0-9]+)?|complex(?: *\* *[0-9]+)?|type) *(?P<parameters>\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))? *(?P<attributes>(?: *, *[a-zA-Z_0-9]+(?: *\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))?)+)? *(?P<dpnt>::)?(?P<vars>[^\n]+)\n?", RE_FLAGS)
-
-OMP_COND_RE = re.compile(r"^\s*(!\$ )", RE_FLAGS)
-OMP_DIR_RE = re.compile(r"^\s*(!\$OMP)", RE_FLAGS)
-
-# supported preprocessors
-FYPP_LINE_STR = r"^(#!|#:|\$:|@:)"
-FYPP_WITHOUT_PREPRO_STR = r"^(#!|\$:|@:)"
-CPP_STR = r"^#[^!:{}]"
-COMMENT_LINE_STR = r"^!"
-FYPP_OPEN_STR = r"(#{|\${|@{)"
-FYPP_CLOSE_STR = r"(}#|}\$|}@)"
-NOTFORTRAN_LINE_RE = re.compile(r"("+FYPP_LINE_STR+r"|"+CPP_STR+r"|"+COMMENT_LINE_STR+r")", RE_FLAGS)
-NOTFORTRAN_FYPP_LINE_RE = re.compile(r"("+CPP_STR+r"|"+COMMENT_LINE_STR+r")", RE_FLAGS)
-FYPP_LINE_RE = re.compile(FYPP_LINE_STR, RE_FLAGS)
-FYPP_WITHOUT_PREPRO_RE = re.compile(FYPP_WITHOUT_PREPRO_STR, RE_FLAGS)
-FYPP_OPEN_RE = re.compile(FYPP_OPEN_STR, RE_FLAGS)
-FYPP_CLOSE_RE = re.compile(FYPP_CLOSE_STR, RE_FLAGS)
-
-STR_OPEN_RE = re.compile(r"("+FYPP_OPEN_STR+r"|"+r"'|\"|!)", RE_FLAGS)
-CPP_RE = re.compile(CPP_STR, RE_FLAGS)
+from .constants import NOTFORTRAN_LINE_RE, NOTFORTRAN_FYPP_LINE_RE, FYPP_CLOSE_RE, FYPP_OPEN_RE, FYPP_LINE_RE, OMP_COND_RE
 
 class fline_parser(object):
     def __init__(self):
@@ -64,27 +39,6 @@ class parser_re(fline_parser):
 
     def split(self, line):
         return self._re.split(line)
-
-class FprettifyException(Exception):
-    """Base class for all custom exceptions"""
-
-    def __init__(self, msg, filename, line_nr):
-        super(FprettifyException, self).__init__(msg)
-        self.filename = filename
-        self.line_nr = line_nr
-
-
-class FprettifyParseException(FprettifyException):
-    """Exception for unparseable Fortran code (user's fault)."""
-
-    pass
-
-
-class FprettifyInternalException(FprettifyException):
-    """Exception for potential internal errors (fixme's)."""
-
-    pass
-
 
 class CharFilter(object):
     """

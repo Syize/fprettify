@@ -14,7 +14,9 @@ maintainers = [
 ]
 keywords = ["fortran", "formatter"]
 description = "auto-formatter for modern fortran source code"
-dependencies = []
+dependencies = [
+    "configargparse>=1.7.1",
+]
 
 [project.urls]
 homepage = "https://github.com/pseewald/fprettify"

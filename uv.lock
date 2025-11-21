@@ -272,6 +272,15 @@ wheels = [
 ]
 
 [[package]]
+name = "configargparse"
+version = "1.7.1"
+source = { registry = "https://mirror.nju.edu.cn/pypi/web/simple/" }
+sdist = { url = "https://mirror.nju.edu.cn/pypi/web/packages/85/4d/6c9ef746dfcc2a32e26f3860bb4a011c008c392b83eabdfb598d1a8bbe5d/configargparse-1.7.1.tar.gz", hash = "sha256:79c2ddae836a1e5914b71d58e4b9adbd9f7779d4e6351a637b7d2d9b6c46d3d9" }
+wheels = [
+    { url = "https://mirror.nju.edu.cn/pypi/web/packages/31/28/d28211d29bcc3620b1fece85a65ce5bb22f18670a03cd28ea4b75ede270c/configargparse-1.7.1-py3-none-any.whl", hash = "sha256:8b586a31f9d873abd1ca527ffbe58863c99f36d896e2829779803125e83be4b6" },
+]
+
+[[package]]
 name = "coverage"
 version = "7.6.1"
 source = { registry = "https://mirror.nju.edu.cn/pypi/web/simple/" }
@@ -549,6 +558,9 @@ wheels = [
 name = "fprettify"
 version = "0.3.7"
 source = { editable = "." }
+dependencies = [
+    { name = "configargparse" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -563,6 +575,7 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "configargparse", specifier = ">=1.7.1" }]
 
 [package.metadata.requires-dev]
 dev = [

@@ -65,218 +65,82 @@ FIXME's
   whitespaces
 - open files only when needed
 """
-import re
-import sys
+import io
 import logging
 import os
-import io
+import re
+import sys
+
+from .exception import FprettifyException, FprettifyInternalException, FprettifyParseException
+from .constants import (ASSOCIATE_RE, BLK_RE, CASE_RE, CONTAINS_RE, DATA_STMT_RE, DEL_CLOSE_RE, DEL_CLOSE_STR, DEL_OPEN_RE, DEL_OPEN_STR, DO_RE, ELSEWHERE_RE, ELSE_RE, EMPTY_RE,
+                        ENDANY_RE,
+                        ENDASSOCIATE_RE, ENDBLK_RE,
+                        ENDDO_RE,
+                        ENDENUM_RE,
+                        ENDFCT_RE,
+                        ENDFORALL_RE, ENDIF_RE,
+                        ENDINTERFACE_RE,
+                        ENDMOD_RE,
+                        ENDPROG_RE, ENDSEL_RE,
+                        ENDSMOD_RE,
+                        ENDSUBR_RE,
+                        ENDTYPE_RE, ENDWHERE_RE, END_RE, ENUM_RE, EOL_SC, F90_CONSTANTS_RE, F90_CONSTANTS_TYPES_RE, F90_KEYWORDS_RE, F90_MODULES_RE, F90_NUMBER_ALL_REC,
+                        F90_OPERATORS_RE,
+                        F90_PROCEDURES_RE, FCT_RE,
+                        FORALL_RE, FORMATTER_ERROR_MESSAGE,
+                        FORTRAN_EXTENSIONS, IF_RE,
+                        INTERFACE_RE, INTR_STMTS_PAR, LINEBREAK_STR, LINESPLIT_MESSAGE,
+                        LR_OPS_RE, MOD_RE, NML_RE, NML_STMT_RE, NO_ALIGN_RE, PREPRO_CONTINUE_SCOPE, PREPRO_END_SCOPE, PREPRO_NEW_SCOPE, PRIVATE_RE, PROG_RE, PUBLIC_RE, REL_OP_RE,
+                        SELCASE_RE,
+                        SMOD_RE,
+                        SOL_STR,
+                        STATEMENT_LABEL_RE, SUBR_RE, TYPE_RE, USE_RE, WHERE_RE, VAR_DECL_RE, OMP_COND_RE, OMP_DIR_RE,
+                        CPP_RE, NOTFORTRAN_LINE_RE, NOTFORTRAN_FYPP_LINE_RE, FYPP_LINE_RE, RE_FLAGS, STR_OPEN_RE, FYPP_WITHOUT_PREPRO_RE)
 
 sys.stdin = io.TextIOWrapper(
-    sys.stdin.detach(), encoding='UTF-8', line_buffering=True)
+    sys.stdin.detach(), encoding='UTF-8', line_buffering=True
+)
 sys.stdout = io.TextIOWrapper(
-    sys.stdout.detach(), encoding='UTF-8', line_buffering=True)
+    sys.stdout.detach(), encoding='UTF-8', line_buffering=True
+)
 
-
-from .fparse_utils import (VAR_DECL_RE, OMP_COND_RE, OMP_DIR_RE,
-                           InputStream, CharFilter,
-                           FprettifyException, FprettifyParseException, FprettifyInternalException,
-                           CPP_RE, NOTFORTRAN_LINE_RE, NOTFORTRAN_FYPP_LINE_RE, FYPP_LINE_RE, RE_FLAGS,
-                           STR_OPEN_RE, parser_re, FYPP_WITHOUT_PREPRO_RE)
+from .fparse_utils import (InputStream, CharFilter, parser_re)
 
 # recognize fortran files by extension
-FORTRAN_EXTENSIONS = [".f", ".for", ".ftn",
-                      ".f90", ".f95", ".f03", ".fpp"]
 FORTRAN_EXTENSIONS += [_.upper() for _ in FORTRAN_EXTENSIONS]
 
 # constants, mostly regular expressions:
-FORMATTER_ERROR_MESSAGE = (" Wrong usage of formatting-specific directives"
-                           " '&', '!&', '!&<' or '!&>'.")
-LINESPLIT_MESSAGE = ("auto indentation failed due to chars limit, "
-                     "line should be split")
-
-EOL_STR = r"\s*;?\s*$"  # end of fortran line
-EOL_SC = r"\s*;\s*$"  # whether line is ended with semicolon
-SOL_STR = r"^\s*"  # start of fortran line
-
-STATEMENT_LABEL_RE = re.compile(r"^\s*(\d+\s)(?!"+EOL_STR+")", RE_FLAGS)
 
 # regular expressions for parsing statements that start, continue or end a
 # subunit:
-IF_RE = re.compile(
-    SOL_STR + r"(\w+\s*:)?\s*IF\s*\(.*\)\s*THEN" + EOL_STR, RE_FLAGS)
-ELSE_RE = re.compile(
-    SOL_STR + r"ELSE(\s*IF\s*\(.*\)\s*THEN)?" + EOL_STR, RE_FLAGS)
-ENDIF_RE = re.compile(SOL_STR + r"END\s*IF(\s+\w+)?" + EOL_STR, RE_FLAGS)
-
-DO_RE = re.compile(SOL_STR + r"(\w+\s*:)?\s*DO(" + EOL_STR + r"|\s+\w)", RE_FLAGS)
-ENDDO_RE = re.compile(SOL_STR + r"END\s*DO(\s+\w+)?" + EOL_STR, RE_FLAGS)
-
-SELCASE_RE = re.compile(
-    SOL_STR + r"SELECT\s*(CASE|RANK|TYPE)\s*\(.*\)" + EOL_STR, RE_FLAGS)
-CASE_RE = re.compile(
-    SOL_STR + r"((CASE|RANK|TYPE\s+IS|CLASS\s+IS)\s*(\(.*\)|DEFAULT)|CLASS\s+DEFAULT)" + EOL_STR, RE_FLAGS)
-ENDSEL_RE = re.compile(SOL_STR + r"END\s*SELECT" + EOL_STR, RE_FLAGS)
-
-ASSOCIATE_RE = re.compile(SOL_STR + r"ASSOCIATE\s*\(.*\)" + EOL_STR, RE_FLAGS)
-ENDASSOCIATE_RE = re.compile(SOL_STR + r"END\s*ASSOCIATE" + EOL_STR, RE_FLAGS)
-
-BLK_RE = re.compile(SOL_STR + r"(\w+\s*:)?\s*BLOCK" + EOL_STR, RE_FLAGS)
-ENDBLK_RE = re.compile(SOL_STR + r"END\s*BLOCK(\s+\w+)?" + EOL_STR, RE_FLAGS)
-
-SUBR_RE = re.compile(
-    r"^([^\"']* )?SUBROUTINE\s+\w+\s*(\(.*\))?" + EOL_STR, RE_FLAGS)
-ENDSUBR_RE = re.compile(
-    SOL_STR + r"END\s*SUBROUTINE(\s+\w+)?" + EOL_STR, RE_FLAGS)
-
-FCT_RE = re.compile(
-    r"^([^\"']* )?FUNCTION\s+\w+\s*(\(.*\))?(\s*RESULT\s*\(\w+\))?" + EOL_STR,
-    RE_FLAGS)
-ENDFCT_RE = re.compile(
-    SOL_STR + r"END\s*FUNCTION(\s+\w+)?" + EOL_STR, RE_FLAGS)
-
-MOD_RE = re.compile(SOL_STR + r"MODULE\s+\w+" + EOL_STR, RE_FLAGS)
-ENDMOD_RE = re.compile(SOL_STR + r"END\s*MODULE(\s+\w+)?" + EOL_STR, RE_FLAGS)
-
-SMOD_RE = re.compile(SOL_STR + r"SUBMODULE\s*\(\w+\)\s+\w+" + EOL_STR, RE_FLAGS)
-ENDSMOD_RE = re.compile(SOL_STR + r"END\s*SUBMODULE(\s+\w+)?" + EOL_STR, RE_FLAGS)
-
-TYPE_RE = re.compile(
-    SOL_STR +
-    r"TYPE(\s*,\s*(BIND\s*\(\s*C\s*\)|EXTENDS\s*\(.*\)|ABSTRACT|PUBLIC|PRIVATE))*(\s*,\s*)?(\s*::\s*|\s+)\w+" + EOL_STR,
-    RE_FLAGS)
-ENDTYPE_RE = re.compile(SOL_STR + r"END\s*TYPE(\s+\w+)?" + EOL_STR, RE_FLAGS)
-
-PROG_RE = re.compile(SOL_STR + r"PROGRAM\s+\w+" + EOL_STR, RE_FLAGS)
-ENDPROG_RE = re.compile(
-    SOL_STR + r"END\s*PROGRAM(\s+\w+)?" + EOL_STR, RE_FLAGS)
-
-INTERFACE_RE = re.compile(
-    r"^([^\"']* )?INTERFACE(\s+\w+|\s+(OPERATOR|ASSIGNMENT)\s*\(.*\))?" + EOL_STR, RE_FLAGS)
-ENDINTERFACE_RE = re.compile(
-    SOL_STR + r"END\s*INTERFACE(\s+\w+|\s+(OPERATOR|ASSIGNMENT)\s*\(.*\))?" + EOL_STR, RE_FLAGS)
-
-CONTAINS_RE = re.compile(SOL_STR + r"CONTAINS" + EOL_STR, RE_FLAGS)
-
-ENUM_RE = re.compile(
-    SOL_STR + r"ENUM(\s*,\s*(BIND\s*\(\s*C\s*\)))?((\s*::\s*|\s+)\w+)?" + EOL_STR,
-    RE_FLAGS)
-ENDENUM_RE = re.compile(SOL_STR + r"END\s*ENUM(\s+\w+)?" + EOL_STR, RE_FLAGS)
-
-ENDANY_RE = re.compile(SOL_STR + r"END" + EOL_STR, RE_FLAGS)
 
 # Regular expressions for where and forall block constructs
-FORALL_RE = re.compile(SOL_STR + r"(\w+\s*:)?\s*FORALL\s*\(.*\)" + EOL_STR, RE_FLAGS)
-ENDFORALL_RE = re.compile(SOL_STR + r"END\s*FORALL(\s+\w+)?" + EOL_STR, RE_FLAGS)
-
-WHERE_RE = re.compile(SOL_STR + r"(\w+\s*:)?\s*WHERE\s*\(.*\)" + EOL_STR, RE_FLAGS)
-ELSEWHERE_RE = re.compile(SOL_STR + r"ELSE\s*WHERE(\(.*\))?(\s*\w+)?" + EOL_STR, RE_FLAGS)
-ENDWHERE_RE = re.compile(SOL_STR + r"END\s*WHERE(\s+\w+)?" + EOL_STR, RE_FLAGS)
 
 # Regular expressions for preprocessor directives
 
-FYPP_DEF_RE = re.compile(SOL_STR + r"#:DEF\s+", RE_FLAGS)
-FYPP_ENDDEF_RE = re.compile(SOL_STR + r"#:ENDDEF", RE_FLAGS)
-
-FYPP_IF_RE = re.compile(SOL_STR + r"#:IF\s+", RE_FLAGS)
-FYPP_ELIF_ELSE_RE = re.compile(SOL_STR + r"#:(ELIF\s+|ELSE)", RE_FLAGS)
-FYPP_ENDIF_RE = re.compile(SOL_STR + r"#:ENDIF", RE_FLAGS)
-
-FYPP_FOR_RE = re.compile(SOL_STR + r"#:FOR\s+", RE_FLAGS)
-FYPP_ENDFOR_RE = re.compile(SOL_STR + r"#:ENDFOR", RE_FLAGS)
-
-FYPP_BLOCK_RE = re.compile(SOL_STR + r"#:BLOCK\s+", RE_FLAGS)
-FYPP_ENDBLOCK_RE = re.compile(SOL_STR + r"#:ENDBLOCK", RE_FLAGS)
-
-FYPP_CALL_RE = re.compile(SOL_STR + r"#:CALL\s+", RE_FLAGS)
-FYPP_ENDCALL_RE = re.compile(SOL_STR + r"#:ENDCALL", RE_FLAGS)
-
-FYPP_MUTE_RE = re.compile(SOL_STR + r"#:MUTE", RE_FLAGS)
-FYPP_ENDMUTE_RE = re.compile(SOL_STR + r"#:ENDMUTE", RE_FLAGS)
-
-PRIVATE_RE = re.compile(SOL_STR + r"PRIVATE\s*::", RE_FLAGS)
-PUBLIC_RE = re.compile(SOL_STR + r"PUBLIC\s*::", RE_FLAGS)
-
-END_RE = re.compile(SOL_STR + r"(END)\s*(IF|DO|SELECT|ASSOCIATE|BLOCK|SUBROUTINE|FUNCTION|MODULE|SUBMODULE|TYPE|PROGRAM|INTERFACE|ENUM|WHERE|FORALL)", RE_FLAGS)
-
 # intrinsic statements with parenthesis notation that are not functions
-INTR_STMTS_PAR = (r"(ALLOCATE|DEALLOCATE|"
-                  r"OPEN|CLOSE|READ|WRITE|"
-                  r"FLUSH|ENDFILE|REWIND|BACKSPACE|INQUIRE|"
-                  r"FORALL|WHERE|ASSOCIATE|NULLIFY)")
 
 # regular expressions for parsing linebreaks
-LINEBREAK_STR = r"(&)[\s]*(?:!.*)?$"
 
 # regular expressions for parsing operators
 # Note: +/- in real literals and sign operator is ignored
-PLUSMINUS_RE = re.compile(r"(?<=[\w\)\]])\s*(\+|-)\s*", RE_FLAGS)
 # Note: ** or // (or any multiples of * or /) are ignored
 #       we also ignore any * or / before a :: because we may be seeing 'real*8'
-MULTDIV_RE = re.compile(
-    r"(?<=[\w\)\]])\s*((?<!\*)\*(?!\*)|(?<!/)/(?!/))(?=[\s\w\(])(?!.*::)", RE_FLAGS)
-REL_OP_RE = re.compile(
-    r"(?<!\()\s*(\.(?:EQ|NE|LT|LE|GT|GE)\.|(?:==|\/=|<(?!=)|<=|(?<!=)>(?!=)|>=))\s*(?!\))",
-    RE_FLAGS)
-LOG_OP_RE = re.compile(r"\s*(\.(?:AND|OR|EQV|NEQV)\.)\s*", RE_FLAGS)
-PRINT_RE = re.compile(r"(?:(?<=\bPRINT)|(?<=\bREAD))\s*(\*,?)\s*", RE_FLAGS)
 
 # regular expressions for parsing delimiters
-DEL_OPEN_STR = r"(\(\/?|\[)"
-DEL_OPEN_RE = re.compile(r"^" + DEL_OPEN_STR, RE_FLAGS)
-DEL_CLOSE_STR = r"(\/?\)|\])"
-DEL_CLOSE_RE = re.compile(r"^" + DEL_CLOSE_STR, RE_FLAGS)
 
 # empty line regex
-EMPTY_RE = re.compile(SOL_STR + r"$", RE_FLAGS)
 
-PREPRO_NEW_SCOPE = [parser_re(FYPP_DEF_RE), parser_re(FYPP_IF_RE), parser_re(FYPP_FOR_RE),
-                       parser_re(FYPP_BLOCK_RE), parser_re(FYPP_CALL_RE), parser_re(FYPP_MUTE_RE)]
-PREPRO_CONTINUE_SCOPE = [None, parser_re(FYPP_ELIF_ELSE_RE), None, None, None, None]
-PREPRO_END_SCOPE = [parser_re(FYPP_ENDDEF_RE), parser_re(FYPP_ENDIF_RE), parser_re(FYPP_ENDFOR_RE),
-                       parser_re(FYPP_ENDBLOCK_RE), parser_re(FYPP_ENDCALL_RE),
-                       parser_re(FYPP_ENDMUTE_RE)]
-
-class plusminus_parser(parser_re):
-    """parser for +/- in addition
-    """
-    def __init__(self, regex):
-        self._re = regex
-        self._re_excl = re.compile(r"\b(\d+\.?\d*|\d*\.?\d+)[de]" + EOL_STR, RE_FLAGS)
-
-    def split(self, line):
-        partsplit = self._re.split(line)
-        partsplit_out = []
-
-        # exclude splits due to '+/-' in real literals
-        for n, part in enumerate(partsplit):
-            if re.search(r"^(\+|-)$", part):
-                if self._re_excl.search(partsplit[n-1]):
-                    if n==1: partsplit_out = [partsplit[n-1]]
-                    if n + 1 >= len(partsplit) or not partsplit_out:
-                        raise FprettifyParseException("non-standard expression involving + or -",'',0)
-                    partsplit_out[-1] += part + partsplit[n+1]
-                else:
-                    if n==1: partsplit_out = [partsplit[n-1]]
-                    if n + 1 >= len(partsplit):
-                        raise FprettifyParseException("non-standard expression involving + or -",'',0)
-                    partsplit_out += [part, partsplit[n+1]]
-
-        if not partsplit_out: partsplit_out = partsplit
-
-        return partsplit_out
 
 # two-sided operators
-LR_OPS_RE = [REL_OP_RE, LOG_OP_RE, plusminus_parser(PLUSMINUS_RE), MULTDIV_RE, PRINT_RE]
-
-USE_RE = re.compile(
-    SOL_STR + "USE(\s+|(,.+?)?::\s*)\w+?((,.+?=>.+?)+|,\s*only\s*:.+?)?$" + EOL_STR, RE_FLAGS)
 
 # markups to deactivate formatter
-NO_ALIGN_RE = re.compile(SOL_STR + r"&\s*[^\s*]+")
+
 
 class where_parser(parser_re):
     """parser for where / forall construct
     """
+
     def search(self, line):
         match = self._re.search(line)
 
@@ -286,11 +150,12 @@ class where_parser(parser_re):
                 [what_del_open, what_del_close] = get_curr_delim(line, pos)
 
                 if what_del_open:
-                    if what_del_open.group() == r'(': level += 1
+                    if what_del_open.group() == r'(':
+                        level += 1
 
                 if what_del_close and what_del_close.group() == r')':
                     if level == 1:
-                        if EMPTY_RE.search(line[pos+1:]):
+                        if EMPTY_RE.search(line[pos + 1:]):
                             return True
                         else:
                             return False
@@ -299,7 +164,9 @@ class where_parser(parser_re):
 
         return False
 
+
 forall_parser = where_parser
+
 
 def build_scope_parser(fypp=True, mod=True):
     parser = {}
@@ -319,7 +186,7 @@ def build_scope_parser(fypp=True, mod=True):
         [parser_re(ENDIF_RE), parser_re(ENDDO_RE), parser_re(ENDSEL_RE), parser_re(ENDSUBR_RE),
          parser_re(ENDFCT_RE),
          parser_re(ENDINTERFACE_RE), parser_re(ENDTYPE_RE), parser_re(ENDENUM_RE), parser_re(ENDASSOCIATE_RE),
-         parser_re(ENDANY_RE,spec=False), parser_re(ENDBLK_RE), parser_re(ENDWHERE_RE), parser_re(ENDFORALL_RE)]
+         parser_re(ENDANY_RE, spec=False), parser_re(ENDBLK_RE), parser_re(ENDWHERE_RE), parser_re(ENDFORALL_RE)]
 
     if mod:
         parser['new'].extend([parser_re(MOD_RE), parser_re(SMOD_RE), parser_re(PROG_RE)])
@@ -333,165 +200,20 @@ def build_scope_parser(fypp=True, mod=True):
 
     return parser
 
+
 # match namelist names
-NML_RE = re.compile(r"(/\w+/)", RE_FLAGS)
 # find namelists and data statements
-NML_STMT_RE = re.compile(SOL_STR + r"NAMELIST.*/.*/", RE_FLAGS)
-DATA_STMT_RE = re.compile(SOL_STR + r"DATA\s+\w", RE_FLAGS)
 
 ## Regexp for f90 keywords'
-F90_KEYWORDS_RE = re.compile(r"\b(" + "|".join((
-    "allocatable", "allocate", "assign", "assignment", "backspace",
-    "block", "call", "case", "character", "close", "common", "complex",
-    "contains", "continue", "cycle", "data", "deallocate",
-    "dimension", "do", "double", "else", "elseif", "elsewhere", "end",
-    "enddo", "endfile", "endif", "entry", "equivalence", "exit",
-    "external", "forall", "format", "function", "goto", "if",
-    "implicit", "include", "inquire", "integer", "intent",
-    "interface", "intrinsic", "logical", "module", "namelist", "none",
-    "nullify", "only", "open", "operator", "optional", "parameter",
-    "pause", "pointer", "precision", "print", "private", "procedure",
-    "program", "public", "read", "real", "recursive", "result", "return",
-    "rewind", "save", "select", "sequence", "stop", "subroutine",
-    "target", "then", "type", "use", "where", "while", "write",
-    ## F95 keywords.
-    "elemental", "pure",
-    ## F2003
-    "abstract", "associate", "asynchronous", "bind", "class",
-    "deferred", "enum", "enumerator", "extends", "extends_type_of",
-    "final", "generic", "import", "non_intrinsic", "non_overridable",
-    "nopass", "pass", "protected", "same_type_as", "value", "volatile",
-    ## F2008.
-    "contiguous", "submodule", "concurrent", "codimension",
-    "sync all", "sync memory", "critical", "image_index",
-    )) + r")\b", RE_FLAGS)
 
 ## Regexp whose first part matches F90 intrinsic procedures.
 ## Add a parenthesis to avoid catching non-procedures.
-F90_PROCEDURES_RE = re.compile(r"\b(" + "|".join((
-    "abs", "achar", "acos", "adjustl", "adjustr", "aimag", "aint",
-    "all", "allocated", "anint", "any", "asin", "associated",
-    "atan", "atan2", "bit_size", "btest", "ceiling", "char", "cmplx",
-    "conjg", "cos", "cosh", "count", "cshift", "date_and_time", "dble",
-    "digits", "dim", "dot_product", "dprod", "eoshift", "epsilon",
-    "exp", "exponent", "floor", "fraction", "huge", "iachar", "iand",
-    "ibclr", "ibits", "ibset", "ichar", "ieor", "index", "int", "ior",
-    "ishft", "ishftc", "kind", "lbound", "len", "len_trim", "lge", "lgt",
-    "lle", "llt", "log", "log10", "logical", "matmul", "max",
-    "maxexponent", "maxloc", "maxval", "merge", "min", "minexponent",
-    "minloc", "minval", "mod", "modulo", "mvbits", "nearest", "nint",
-    "not", "pack", "precision", "present", "product", "radix",
-    ## Real is taken out here to avoid highlighting declarations.
-    "random_number", "random_seed", "range", ## "real"
-    "repeat", "reshape", "rrspacing", "scale", "scan",
-    "selected_int_kind", "selected_real_kind", "set_exponent",
-    "shape", "sign", "sin", "sinh", "size", "spacing", "spread", "sqrt",
-    "sum", "system_clock", "tan", "tanh", "tiny", "transfer",
-    "transpose", "trim", "ubound", "unpack", "verify",
-    ## F95 intrinsic functions.
-    "null", "cpu_time",
-    ## F2003.
-    "move_alloc", "command_argument_count", "get_command",
-    "get_command_argument", "get_environment_variable",
-    "selected_char_kind", "wait", "flush", "new_line",
-    "extends", "extends_type_of", "same_type_as", "bind",
-    ## F2003 ieee_arithmetic intrinsic module.
-    "ieee_support_underflow_control", "ieee_get_underflow_mode",
-    "ieee_set_underflow_mode",
-    ## F2003 iso_c_binding intrinsic module.
-    "c_loc", "c_funloc", "c_associated", "c_f_pointer",
-    "c_f_procpointer",
-    ## F2008.
-    "bge", "bgt", "ble", "blt", "dshiftl", "dshiftr", "leadz", "popcnt",
-    "poppar", "trailz", "maskl", "maskr", "shifta", "shiftl", "shiftr",
-    "merge_bits", "iall", "iany", "iparity", "storage_size",
-    "bessel_j0", "bessel_j1", "bessel_jn",
-    "bessel_y0", "bessel_y1", "bessel_yn",
-    "erf", "erfc", "erfc_scaled", "gamma", "hypot", "log_gamma",
-    "norm2", "parity", "findloc", "is_contiguous",
-    "sync images", "lock", "unlock", "image_index",
-    "lcobound", "ucobound", "num_images", "this_image",
-    ## F2008 iso_fortran_env module.
-    "compiler_options", "compiler_version",
-    ## F2008 iso_c_binding module.
-    "c_sizeof"
-
-    )) + r")\b", RE_FLAGS)
-
-F90_MODULES_RE = re.compile(r"\b(" + "|".join((
-    ## F2003/F2008 module names
-    "iso_fortran_env",
-    "iso_c_binding",
-    "ieee_exceptions",
-    "ieee_arithmetic",
-    "ieee_features"
-    )) + r")\b", RE_FLAGS)
 
 ## Regexp matching intrinsic operators
-F90_OPERATORS_RE = re.compile(r"(" + "|".join([r"\." + a + r"\." for a in (
-    "and", "eq", "eqv", "false", "ge", "gt", "le", "lt", "ne",
-    "neqv", "not", "or", "true"
-    )]) + r")", RE_FLAGS)
 
 ## Regexp for Fortran intrinsic constants
-F90_CONSTANTS_RE = re.compile(r"\b(" + "|".join((
-    ## F2003 iso_fortran_env constants.
-    "input_unit", "output_unit", "error_unit",
-    "iostat_end", "iostat_eor",
-    "numeric_storage_size", "character_storage_size",
-    "file_storage_size",
-    ## F2003 iso_c_binding constants.
-    "c_int", "c_short", "c_long", "c_long_long", "c_signed_char",
-    "c_size_t",
-    "c_int8_t", "c_int16_t", "c_int32_t", "c_int64_t",
-    "c_int_least8_t", "c_int_least16_t", "c_int_least32_t",
-    "c_int_least64_t",
-    "c_int_fast8_t", "c_int_fast16_t", "c_int_fast32_t",
-    "c_int_fast64_t",
-    "c_intmax_t", "c_intptr_t",
-    "c_float", "c_double", "c_long_double",
-    "c_float_complex", "c_double_complex", "c_long_double_complex",
-    "c_bool", "c_char",
-    "c_null_char", "c_alert", "c_backspace", "c_form_feed",
-    "c_new_line", "c_carriage_return", "c_horizontal_tab",
-    "c_vertical_tab",
-    "c_ptr", "c_funptr", "c_null_ptr", "c_null_funptr",
-    ## F2008 iso_fortran_env constants.
-    "character_kinds", "int8", "int16", "int32", "int64",
-    "integer_kinds", "iostat_inquire_internal_unit",
-    "logical_kinds", "real_kinds", "real32", "real64", "real128",
-    "lock_type", "atomic_int_kind", "atomic_logical_kind",
-    )) + r")\b", RE_FLAGS)
-
-F90_INT_RE = r"[-+]?[0-9]+"
-F90_FLOAT_RE = r"[-+]?([0-9]+\.[0-9]*|\.[0-9]+)"
-F90_NUMBER_RE = "(" + F90_INT_RE + "|" + F90_FLOAT_RE + ")"
-F90_FLOAT_EXP_RE = F90_NUMBER_RE + r"[eEdD]" + F90_NUMBER_RE
-F90_NUMBER_ALL_RE = "(" + F90_NUMBER_RE + "|" + F90_FLOAT_EXP_RE + ")"
-F90_NUMBER_ALL_REC = re.compile(F90_NUMBER_ALL_RE, RE_FLAGS)
 
 ## F90_CONSTANTS_TYPES_RE = re.compile(r"\b" + F90_NUMBER_ALL_RE + "_(" + "|".join([a + r"\b" for a in (
-F90_CONSTANTS_TYPES_RE = re.compile(
-    r"(" + F90_NUMBER_ALL_RE + ")*_(" + "|".join((
-    ## F2003 iso_fortran_env constants.
-    ## F2003 iso_c_binding constants.
-    "c_int", "c_short", "c_long", "c_long_long", "c_signed_char",
-    "c_size_t",
-    "c_int8_t", "c_int16_t", "c_int32_t", "c_int64_t",
-    "c_int_least8_t", "c_int_least16_t", "c_int_least32_t",
-    "c_int_least64_t",
-    "c_int_fast8_t", "c_int_fast16_t", "c_int_fast32_t",
-    "c_int_fast64_t",
-    "c_intmax_t", "c_intptr_t",
-    "c_float", "c_double", "c_long_double",
-    "c_float_complex", "c_double_complex", "c_long_double_complex",
-    "c_bool", "c_char",
-    ## F2008 iso_fortran_env constants.
-    "character_kinds", "int8", "int16", "int32", "int64",
-    "integer_kinds",
-    "logical_kinds", "real_kinds", "real32", "real64", "real128",
-    "lock_type", "atomic_int_kind", "atomic_logical_kind",
-    )) + r")\b", RE_FLAGS)
 
 
 class F90Indenter(object):
@@ -526,8 +248,10 @@ class F90Indenter(object):
         if not self._indent_storage:
             self._indent_storage = [0]
 
-    def process_lines_of_fline(self, f_line, lines, rel_ind, rel_ind_con,
-                               line_nr, indent_fypp=True, manual_lines_indent=None):
+    def process_lines_of_fline(
+        self, f_line, lines, rel_ind, rel_ind_con,
+        line_nr, indent_fypp=True, manual_lines_indent=None
+        ):
         """
         Process all lines that belong to a Fortran line `f_line`.
 
@@ -572,8 +296,10 @@ class F90Indenter(object):
                 is_new = True
                 valid_new = True
                 scopes.append(what_new)
-                log_message("{}: {}".format(what_new, f_line),
-                            "debug", filename, line_nr)
+                log_message(
+                    "{}: {}".format(what_new, f_line),
+                    "debug", filename, line_nr
+                    )
 
         # check statements that continue scope
         is_con = False
@@ -582,8 +308,11 @@ class F90Indenter(object):
             if conre and conre.search(f_line_filtered):
                 what_con = con_n
                 is_con = True
-                log_message("{}: {}".format(
-                    what_con, f_line), "debug", filename, line_nr)
+                log_message(
+                    "{}: {}".format(
+                        what_con, f_line
+                    ), "debug", filename, line_nr
+                )
                 if len(scopes) > 0:
                     what = scopes[-1]
                     if what == what_con or indent_fypp:
@@ -596,15 +325,21 @@ class F90Indenter(object):
             if endre and endre.search(f_line_filtered):
                 what_end = end_n
                 is_end = True
-                log_message("{}: {}".format(
-                    what_end, f_line), "debug", filename, line_nr)
+                log_message(
+                    "{}: {}".format(
+                        what_end, f_line
+                    ), "debug", filename, line_nr
+                )
                 if len(scopes) > 0:
                     what = scopes.pop()
                     if (what == what_end or not self._parser['end'][what_end].spec
                         or indent_fypp):
                         valid_end = True
-                        log_message("{}: {}".format(
-                            what_end, f_line), "debug", filename, line_nr)
+                        log_message(
+                            "{}: {}".format(
+                                what_end, f_line
+                            ), "debug", filename, line_nr
+                        )
                 else:
                     valid_end = True
 
@@ -613,14 +348,14 @@ class F90Indenter(object):
 
             for new_n, newre in enumerate(PREPRO_NEW_SCOPE):
                 for l in lines:
-                    if(newre and newre.search(l)):
+                    if (newre and newre.search(l)):
                         is_new = True
                         valid_new = True
                         scopes.append(new_n)
 
             for end_n, endre in enumerate(PREPRO_END_SCOPE):
                 for l in lines:
-                    if(endre and endre.search(l)):
+                    if (endre and endre.search(l)):
                         is_end = True
                         valid_end = True
                         if len(scopes) > 0:
@@ -629,7 +364,8 @@ class F90Indenter(object):
         # deal with line breaks
         if not manual_lines_indent:
             self._aligner.process_lines_of_fline(
-                f_line, lines, rel_ind_con, line_nr)
+                f_line, lines, rel_ind_con, line_nr
+            )
             br_indent_list = self._aligner.get_lines_indent()
         else:
             br_indent_list = manual_lines_indent
@@ -639,8 +375,10 @@ class F90Indenter(object):
 
         if is_new and not is_end:
             if not valid_new:
-                log_message('invalid scope opening statement',
-                            "info", filename, line_nr)
+                log_message(
+                    'invalid scope opening statement',
+                    "info", filename, line_nr
+                    )
 
             line_indents = [ind + indents[-1] for ind in line_indents]
 
@@ -651,8 +389,10 @@ class F90Indenter(object):
 
             if not valid:
                 line_indents = [ind + indents[-1] for ind in line_indents]
-                log_message('invalid scope closing statement',
-                            "info", filename, line_nr)
+                log_message(
+                    'invalid scope closing statement',
+                    "info", filename, line_nr
+                    )
             else:
                 if len(indents) > 1 or self._initial:
                     line_indents = [ind + indents[-2 + self._initial]
@@ -728,13 +468,16 @@ class F90Aligner(object):
         is_use = USE_RE.search(f_line)
         for pos, line in enumerate(lines):
             self.__align_line_continuations(
-                line, is_decl, is_use, rel_ind, self._line_nr + pos)
+                line, is_decl, is_use, rel_ind, self._line_nr + pos
+            )
             if pos + 1 < len(lines):
                 self._line_indents.append(self._br_indent_list[-1])
 
         if len(self._br_indent_list) > 2 or self._level:
-            log_message('unpaired bracket delimiters',
-                        "info", self._filename, self._line_nr)
+            log_message(
+                'unpaired bracket delimiters',
+                "info", self._filename, self._line_nr
+                )
 
     def get_lines_indent(self):
         """after processing, retrieve the indents of all line parts."""
@@ -781,8 +524,10 @@ class F90Aligner(object):
                     level += -1
                     indent_list.pop()
                 else:
-                    log_message('unpaired bracket delimiters',
-                                "info", filename, line_nr)
+                    log_message(
+                        'unpaired bracket delimiters',
+                        "info", filename, line_nr
+                        )
 
                 if pos_ldelim:
                     pos_ldelim.pop()
@@ -795,8 +540,10 @@ class F90Aligner(object):
                     if what_del_open == r"[":
                         valid = what_del_close == r"]"
                     if not valid:
-                        log_message('unpaired bracket delimiters',
-                                    "info", filename, line_nr)
+                        log_message(
+                            'unpaired bracket delimiters',
+                            "info", filename, line_nr
+                            )
 
                 else:
                     pos_rdelim.append(pos)
@@ -807,27 +554,34 @@ class F90Aligner(object):
                 pos_eq = 0
                 indent_list.pop()
             if not level and not is_decl and char == '=' and not REL_OP_RE.search(
-                    line[max(0, pos - 1):min(pos + 2, len(line))]):
-                        # should only have one assignment per line!
+                line[max(0, pos - 1):min(pos + 2, len(line))]
+            ):
+                # should only have one assignment per line!
                 if pos_eq > 0:
                     raise FprettifyInternalException(
-                            "found more than one assignment in the same Fortran line", filename, line_nr)
+                        "found more than one assignment in the same Fortran line", filename, line_nr
+                    )
                 is_pointer = line[pos + 1] == '>'
                 pos_eq = pos + 1
                 # don't align if assignment operator directly before
                 # line break
-                if not re.search(r"=>?\s*" + LINEBREAK_STR, line,
-                                 RE_FLAGS):
+                if not re.search(
+                    r"=>?\s*" + LINEBREAK_STR, line,
+                    RE_FLAGS
+                    ):
                     indent_list.append(
-                        pos_eq + 1 + is_pointer + indent_list[-1])
+                        pos_eq + 1 + is_pointer + indent_list[-1]
+                    )
             elif is_decl and line[pos:pos + 2] == '::' and not re.search(r"::\s*" + LINEBREAK_STR, line, RE_FLAGS):
                 indent_list.append(pos + 3 + indent_list[-1])
             elif is_use and line[pos] == ':' and not re.search(r":\s*" + LINEBREAK_STR, line, RE_FLAGS):
                 indent_list.append(pos + 2 + indent_list[-1])
 
         # Don't align if delimiter opening directly before line break
-        if level and re.search(DEL_OPEN_STR + r"\s*" + LINEBREAK_STR, line,
-                               RE_FLAGS):
+        if level and re.search(
+            DEL_OPEN_STR + r"\s*" + LINEBREAK_STR, line,
+            RE_FLAGS
+            ):
             if len(indent_list) > 1:
                 indent_list[-1] = indent_list[-2]
             else:
@@ -866,7 +620,8 @@ def inspect_ffile_format(infile, indent_size, strict_indent, indent_fypp=False, 
         if not lines:
             break
 
-        if FYPP_LINE_RE.search(f_line): has_fypp = True
+        if FYPP_LINE_RE.search(f_line):
+            has_fypp = True
 
         f_line, lines, label = preprocess_labels(f_line, lines)
 
@@ -909,8 +664,8 @@ def replace_relational_single_fline(f_line, cstyle):
         pos = -1
         line_parts = ['']
         for pos, char in CharFilter(f_line):
-            if pos > pos_prev + 1: # skipped string
-                line_parts.append(f_line[pos_prev + 1:pos].strip()) # append string
+            if pos > pos_prev + 1:  # skipped string
+                line_parts.append(f_line[pos_prev + 1:pos].strip())  # append string
                 line_parts.append('')
 
             line_parts[-1] += char
@@ -932,11 +687,11 @@ def replace_relational_single_fline(f_line, cstyle):
                     part = re.sub(r"\.EQ\.", "==  ", part, flags=RE_FLAGS)
                     part = re.sub(r"\.NE\.", "/=  ", part, flags=RE_FLAGS)
                 else:
-                    part = re.sub(r"<=",  ".le.", part, flags=RE_FLAGS)
-                    part = re.sub(r"<",   ".lt.", part, flags=RE_FLAGS)
-                    part = re.sub(r">=",  ".ge.", part, flags=RE_FLAGS)
-                    part = re.sub(r">",   ".gt.", part, flags=RE_FLAGS)
-                    part = re.sub(r"==",  ".eq.", part, flags=RE_FLAGS)
+                    part = re.sub(r"<=", ".le.", part, flags=RE_FLAGS)
+                    part = re.sub(r"<", ".lt.", part, flags=RE_FLAGS)
+                    part = re.sub(r">=", ".ge.", part, flags=RE_FLAGS)
+                    part = re.sub(r">", ".gt.", part, flags=RE_FLAGS)
+                    part = re.sub(r"==", ".eq.", part, flags=RE_FLAGS)
                     part = re.sub(r"\/=", ".ne.", part, flags=RE_FLAGS)
 
             line_parts[pos] = part
@@ -958,8 +713,8 @@ def replace_keywords_single_fline(f_line, case_dict):
     pos = -1
     line_parts = ['']
     for pos, char in CharFilter(f_line):
-        if pos > pos_prev + 1: # skipped string
-            line_parts.append(f_line[pos_prev + 1:pos].strip()) # append string
+        if pos > pos_prev + 1:  # skipped string
+            line_parts.append(f_line[pos_prev + 1:pos].strip())  # append string
             line_parts.append('')
 
         line_parts[-1] += char
@@ -969,18 +724,18 @@ def replace_keywords_single_fline(f_line, case_dict):
     if pos + 1 < len(f_line):
         line_parts.append(f_line[pos + 1:])
 
-    line_parts = [[a] if STR_OPEN_RE.match(a) else re.split(F90_OPERATORS_RE,a)
+    line_parts = [[a] if STR_OPEN_RE.match(a) else re.split(F90_OPERATORS_RE, a)
                   for a in line_parts]  # problem, split "."
     line_parts = [b for a in line_parts for b in a]
 
     ## line_parts = [[a] if STR_OPEN_RE.match(a) else re.split('(\W)',a)
     ##               for a in line_parts]  # problem, split "."
     line_parts = [[a] if STR_OPEN_RE.match(a)
-                  else re.split('([^a-zA-Z0-9_.])',a)
+                  else re.split('([^a-zA-Z0-9_.])', a)
                   for a in line_parts]
     line_parts = [b for a in line_parts for b in a]
 
-    swapcase = lambda s, a: s if a==0 else (s.lower() if a==1 else s.upper())
+    swapcase = lambda s, a: s if a == 0 else (s.lower() if a == 1 else s.upper())
 
     nbparts = len(line_parts)
     for pos, part in enumerate(line_parts):
@@ -992,7 +747,7 @@ def replace_keywords_single_fline(f_line, case_dict):
                 part = swapcase(part, case_dict['procedures'])
             elif F90_PROCEDURES_RE.match(part):
                 ok = False
-                for pos2 in range(pos+1, nbparts):
+                for pos2 in range(pos + 1, nbparts):
                     part2 = line_parts[pos2]
                     if part2.strip() and not (part2 == '\n' or STR_OPEN_RE.match(part2)):
                         ok = (part2 == '(')
@@ -1015,9 +770,11 @@ def replace_keywords_single_fline(f_line, case_dict):
     return new_line
 
 
-def format_single_fline(f_line, whitespace, whitespace_dict, linebreak_pos,
-                        ampersand_sep, scope_parser, format_decl, filename, line_nr,
-                        auto_format=True):
+def format_single_fline(
+    f_line, whitespace, whitespace_dict, linebreak_pos,
+    ampersand_sep, scope_parser, format_decl, filename, line_nr,
+    auto_format=True
+    ):
     """
     format a single Fortran line - imposes white space formatting
     and inserts linebreaks.
@@ -1034,17 +791,17 @@ def format_single_fline(f_line, whitespace, whitespace_dict, linebreak_pos,
 
     # define whether to put whitespaces around operators:
     mapping = {
-            'comma': 0,           # 0: comma, semicolon
-            'assignments': 1,     # 1: assignment operators
-            'relational': 2,      # 2: relational operators
-            'logical': 3,         # 3: logical operators
-            'plusminus': 4,       # 4: arithm. operators plus and minus
-            'multdiv': 5,         # 5: arithm. operators multiply and divide
-            'print': 6,           # 6: print / read statements
-            'type': 7,            # 7: select type components
-            'intrinsics': 8,      # 8: intrinsics
-            'decl': 9             # 9: declarations
-            }
+        'comma': 0,  # 0: comma, semicolon
+        'assignments': 1,  # 1: assignment operators
+        'relational': 2,  # 2: relational operators
+        'logical': 3,  # 3: logical operators
+        'plusminus': 4,  # 4: arithm. operators plus and minus
+        'multdiv': 5,  # 5: arithm. operators multiply and divide
+        'print': 6,  # 6: print / read statements
+        'type': 7,  # 7: select type components
+        'intrinsics': 8,  # 8: intrinsics
+        'decl': 9  # 9: declarations
+    }
 
     if whitespace == 0:
         spacey = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -1077,7 +834,8 @@ def format_single_fline(f_line, whitespace, whitespace_dict, linebreak_pos,
         line = add_whitespace_context(line, spacey)
 
     lines_out = split_reformatted_line(
-        line_orig, linebreak_pos, ampersand_sep, line, filename, line_nr)
+        line_orig, linebreak_pos, ampersand_sep, line, filename, line_nr
+    )
     return lines_out
 
 
@@ -1093,7 +851,7 @@ def rm_extra_whitespace(line, format_decl):
             is_decl = line[pos:].lstrip().startswith('::') or line[
                 :pos].rstrip().endswith('::')
 
-        if pos > pos_prev + 1: # skipped string
+        if pos > pos_prev + 1:  # skipped string
             line_ftd = line_ftd + line[pos_prev + 1:pos]
 
         if char == ' ':
@@ -1102,12 +860,12 @@ def rm_extra_whitespace(line, format_decl):
                 line_ftd = line_ftd + char
         else:
             if (line_ftd and line_ftd[-1] == ' ' and
-                    (not re.search(r'[\w]', char) and not is_decl)):
+                (not re.search(r'[\w]', char) and not is_decl)):
                 line_ftd = line_ftd[:-1]  # remove spaces except between words
             line_ftd = line_ftd + char
         pos_prev = pos
 
-    line_ftd = line_ftd + line[pos+1:]
+    line_ftd = line_ftd + line[pos + 1:]
     return line_ftd
 
 
@@ -1146,26 +904,44 @@ def add_whitespace_charwise(line, spacey, scope_parser, format_decl, filename, l
                 # with some exceptions:
                 # FIXME: duplication of regex, better to include them into
                 # INTR_STMTS_PAR
-                if ((not re.search((r"(" + DEL_OPEN_STR +
-                                    r"|[\w\*/=\+\-:])\s*$"),
-                                   line[:pos], RE_FLAGS) and
+                if ((not re.search(
+                    (r"(" + DEL_OPEN_STR +
+                     r"|[\w\*/=\+\-:])\s*$"),
+                    line[:pos], RE_FLAGS
+                    ) and
                      not EMPTY_RE.search(line[:pos])) or
-                        re.search(SOL_STR + r"(\w+\s*:)?(ELSE)?\s*IF\s*$",
-                                  line[:pos], RE_FLAGS) or
-                        re.search(SOL_STR + r"(\w+\s*:)?\s*DO\s+WHILE\s*$",
-                                  line[:pos], RE_FLAGS) or
-                        re.search(SOL_STR + r"(SELECT)?\s*CASE\s*$",
-                                  line[:pos], RE_FLAGS) or
-                        re.search(SOL_STR + r"(SELECT)?\s*RANK\s*$",
-                                  line[:pos], RE_FLAGS) or
-                        re.search(SOL_STR + r"SELECT\s*TYPE\s*$",
-                                  line[:pos], RE_FLAGS) or
-                        re.search(SOL_STR + r"CLASS\s*DEFAULT\s*$",
-                                  line[:pos], RE_FLAGS) or
-                        re.search(SOL_STR + r"(TYPE|CLASS)\s+IS\s*$",
-                                  line[:pos], RE_FLAGS) or
-                        re.search(r"(?<!%)\b" + INTR_STMTS_PAR + r"\s*$",
-                                  line[:pos], RE_FLAGS)):
+                    re.search(
+                        SOL_STR + r"(\w+\s*:)?(ELSE)?\s*IF\s*$",
+                        line[:pos], RE_FLAGS
+                        ) or
+                    re.search(
+                        SOL_STR + r"(\w+\s*:)?\s*DO\s+WHILE\s*$",
+                        line[:pos], RE_FLAGS
+                        ) or
+                    re.search(
+                        SOL_STR + r"(SELECT)?\s*CASE\s*$",
+                        line[:pos], RE_FLAGS
+                        ) or
+                    re.search(
+                        SOL_STR + r"(SELECT)?\s*RANK\s*$",
+                        line[:pos], RE_FLAGS
+                        ) or
+                    re.search(
+                        SOL_STR + r"SELECT\s*TYPE\s*$",
+                        line[:pos], RE_FLAGS
+                        ) or
+                    re.search(
+                        SOL_STR + r"CLASS\s*DEFAULT\s*$",
+                        line[:pos], RE_FLAGS
+                        ) or
+                    re.search(
+                        SOL_STR + r"(TYPE|CLASS)\s+IS\s*$",
+                        line[:pos], RE_FLAGS
+                        ) or
+                    re.search(
+                        r"(?<!%)\b" + INTR_STMTS_PAR + r"\s*$",
+                        line[:pos], RE_FLAGS
+                        )):
                     sep1 = 1 * spacey[8]
 
             # format closing delimiters
@@ -1173,13 +949,17 @@ def add_whitespace_charwise(line, spacey, scope_parser, format_decl, filename, l
                 if level > 0:
                     level += -1  # close scope
                 else:
-                    log_message('unpaired bracket delimiters',
-                                "info", filename, line_nr)
+                    log_message(
+                        'unpaired bracket delimiters',
+                        "info", filename, line_nr
+                        )
 
                 # add separating whitespace after closing delimiter
                 # with some exceptions:
-                if not re.search(r"^\s*(" + DEL_CLOSE_STR + r"|[,%:/\*])",
-                                 line[pos + 1:], RE_FLAGS):
+                if not re.search(
+                    r"^\s*(" + DEL_CLOSE_STR + r"|[,%:/\*])",
+                    line[pos + 1:], RE_FLAGS
+                    ):
                     sep2 = 1
                 elif re.search(r"^\s*::", line[pos + 1:], RE_FLAGS):
                     sep2 = len(rhs) - len(rhs.lstrip(' ')) if not format_decl else 1
@@ -1188,14 +968,14 @@ def add_whitespace_charwise(line, spacey, scope_parser, format_decl, filename, l
             end_of_delim = pos + len(delim) - 1
 
             line_ftd = lhs.rstrip(' ') + ' ' * sep1 + \
-                delim + ' ' * sep2 + rhs.lstrip(' ')
+                       delim + ' ' * sep2 + rhs.lstrip(' ')
 
         # format commas and semicolons
         if char in [',', ';']:
             lhs = line_ftd[:pos + offset]
             rhs = line_ftd[pos + 1 + offset:]
             line_ftd = lhs.rstrip(' ') + char + ' ' * \
-                spacey[0] + rhs.lstrip(' ')
+                       spacey[0] + rhs.lstrip(' ')
             line_ftd = line_ftd.rstrip(' ')
 
         # format type selector %
@@ -1203,20 +983,20 @@ def add_whitespace_charwise(line, spacey, scope_parser, format_decl, filename, l
             lhs = line_ftd[:pos + offset]
             rhs = line_ftd[pos + 1 + offset:]
             line_ftd = lhs.rstrip(' ') \
-                    + ' ' * spacey[7] \
-                    + char \
-                    + ' ' * spacey[7] \
-                    + rhs.lstrip(' ')
+                       + ' ' * spacey[7] \
+                       + char \
+                       + ' ' * spacey[7] \
+                       + rhs.lstrip(' ')
             line_ftd = line_ftd.rstrip(' ')
 
         # format '::'
-        if format_decl and line[pos:pos+2] == "::":
+        if format_decl and line[pos:pos + 2] == "::":
             lhs = line_ftd[:pos + offset]
             rhs = line_ftd[pos + 2 + offset:]
             line_ftd = lhs.rstrip(' ') \
-                    + ' ' * spacey[9] \
-                    + '::' + ' ' * spacey[9] \
-                    + rhs.lstrip(' ')
+                       + ' ' * spacey[9] \
+                       + '::' + ' ' * spacey[9] \
+                       + rhs.lstrip(' ')
             line_ftd = line_ftd.rstrip(' ')
 
         # format .NOT.
@@ -1224,7 +1004,8 @@ def add_whitespace_charwise(line, spacey, scope_parser, format_decl, filename, l
             lhs = line_ftd[:pos + offset]
             rhs = line_ftd[pos + 5 + offset:]
             line_ftd = lhs.rstrip(
-                ' ') + line[pos:pos + 5] + ' ' * spacey[3] + rhs.lstrip(' ')
+                ' '
+            ) + line[pos:pos + 5] + ' ' * spacey[3] + rhs.lstrip(' ')
 
         # strip whitespaces from '=' and prepare assignment operator
         # formatting:
@@ -1258,7 +1039,7 @@ def add_whitespace_charwise(line, spacey, scope_parser, format_decl, filename, l
             if endre and endre.search(line_ftd):
                 is_end = True
     if is_end:
-        line_ftd = END_RE.sub(r'\1' + ' '*spacey[8] + r'\2', line_ftd)
+        line_ftd = END_RE.sub(r'\1' + ' ' * spacey[8] + r'\2', line_ftd)
 
     if level != 0:
         log_message('unpaired bracket delimiters', "info", filename, line_nr)
@@ -1272,13 +1053,12 @@ def add_whitespace_context(line, spacey):
     not comments or strings in order to be able to apply a context aware regex.
     """
 
-
     pos_prev = -1
     pos = -1
     line_parts = ['']
     for pos, char in CharFilter(line):
-        if pos > pos_prev + 1: # skipped string
-            line_parts.append(line[pos_prev + 1:pos].strip()) # append string
+        if pos > pos_prev + 1:  # skipped string
+            line_parts.append(line[pos_prev + 1:pos].strip())  # append string
             line_parts.append('')
 
         line_parts[-1] += char
@@ -1302,7 +1082,7 @@ def add_whitespace_context(line, spacey):
             # exclude comments, strings:
             if not STR_OPEN_RE.match(part):
                 # also exclude / if we see a namelist and data statement
-                if not ( NML_STMT_RE.match(line) or DATA_STMT_RE.match(line) ):
+                if not (NML_STMT_RE.match(line) or DATA_STMT_RE.match(line)):
                     partsplit = lr_re.split(part)
                     line_parts[pos] = (' ' * spacey[n_op + 2]).join(partsplit)
 
@@ -1314,8 +1094,10 @@ def add_whitespace_context(line, spacey):
 
     # format ':' for labels and use only statements
     if USE_RE.search(line):
-        line = re.sub(r'(only)\s*:\s*', r'\g<1>:' + ' ' *
-                      spacey[0], line, flags=RE_FLAGS)
+        line = re.sub(
+            r'(only)\s*:\s*', r'\g<1>:' + ' ' *
+            spacey[0], line, flags=RE_FLAGS
+            )
 
     return line
 
@@ -1337,7 +1119,8 @@ def split_reformatted_line(line_orig, linebreak_pos_orig, ampersand_sep, line, f
 
         if line[pos_new] != line_orig[pos_old]:
             raise FprettifyInternalException(
-                "failed at finding line break position", filename, line_nr)
+                "failed at finding line break position", filename, line_nr
+            )
 
         if linebreak_pos_orig and pos_old > linebreak_pos_orig[-1]:
             linebreak_pos_orig.pop()
@@ -1357,9 +1140,13 @@ def split_reformatted_line(line_orig, linebreak_pos_orig, ampersand_sep, line, f
     # We split line into parts and we insert ampersands at line end, but not
     # for empty lines and comment lines
     lines_split = [(line[l:r].rstrip(' ') +
-                       ' ' * ampersand_sep[pos] + '&' * min(1, r - l))
-                      for pos, (l, r) in enumerate(zip(linebreak_pos_ftd[0:-1],
-                                                       linebreak_pos_ftd[1:]))]
+                    ' ' * ampersand_sep[pos] + '&' * min(1, r - l))
+                   for pos, (l, r) in enumerate(
+            zip(
+                linebreak_pos_ftd[0:-1],
+                linebreak_pos_ftd[1:]
+                )
+            )]
 
     lines_split.append(line[linebreak_pos_ftd[-1]:])
 
@@ -1378,6 +1165,7 @@ def diff(a, b, a_name, b_name):
         difflib.unified_diff(a_lines, b_lines, fromfile=a_name, tofile=b_name, n=5)
     )
 
+
 def reformat_inplace(filename, stdout=False, diffonly=False, **kwargs):  # pragma: no cover
     """reformat a file in place."""
     if filename == '-':
@@ -1387,13 +1175,15 @@ def reformat_inplace(filename, stdout=False, diffonly=False, **kwargs):  # pragm
         infile = io.open(filename, 'r', encoding='utf-8')
 
     newfile = io.StringIO()
-    reformat_ffile(infile, newfile,
-                   orig_filename=filename, **kwargs)
+    reformat_ffile(
+        infile, newfile,
+        orig_filename=filename, **kwargs
+        )
 
     if diffonly:
         infile.seek(0)
         newfile.seek(0)
-        diff_contents=diff(infile.read(),newfile.read(),filename,filename)
+        diff_contents = diff(infile.read(), newfile.read(), filename, filename)
         sys.stdout.write(diff_contents)
     else:
 
@@ -1416,10 +1206,13 @@ def reformat_inplace(filename, stdout=False, diffonly=False, **kwargs):  # pragm
                 outfile = io.open(filename, 'w', encoding='utf-8')
                 outfile.write(newfile.getvalue())
 
-def reformat_ffile(infile, outfile, impose_indent=True, indent_size=3, strict_indent=False, impose_whitespace=True,
-                   case_dict={},
-                   impose_replacements=False, cstyle=False, whitespace=2, whitespace_dict={}, llength=132,
-                   strip_comments=False, format_decl=False, orig_filename=None, indent_fypp=True, indent_mod=True):
+
+def reformat_ffile(
+    infile, outfile, impose_indent=True, indent_size=3, strict_indent=False, impose_whitespace=True,
+    case_dict={},
+    impose_replacements=False, cstyle=False, whitespace=2, whitespace_dict={}, llength=132,
+    strip_comments=False, format_decl=False, orig_filename=None, indent_fypp=True, indent_mod=True
+    ):
     """main method to be invoked for formatting a Fortran file."""
 
     # note: whitespace formatting and indentation may require different parsing rules
@@ -1439,10 +1232,12 @@ def reformat_ffile(infile, outfile, impose_indent=True, indent_size=3, strict_in
         _impose_indent = False
 
         newfile = io.StringIO()
-        reformat_ffile_combined(oldfile, newfile, _impose_indent, indent_size, strict_indent, impose_whitespace,
-                                case_dict,
-                                impose_replacements, cstyle, whitespace, whitespace_dict, llength,
-                                strip_comments, format_decl, orig_filename, indent_fypp, indent_mod)
+        reformat_ffile_combined(
+            oldfile, newfile, _impose_indent, indent_size, strict_indent, impose_whitespace,
+            case_dict,
+            impose_replacements, cstyle, whitespace, whitespace_dict, llength,
+            strip_comments, format_decl, orig_filename, indent_fypp, indent_mod
+            )
         oldfile = newfile
 
     # 2) indentation
@@ -1452,19 +1247,22 @@ def reformat_ffile(infile, outfile, impose_indent=True, indent_size=3, strict_in
         _impose_replacements = False
 
         newfile = io.StringIO()
-        reformat_ffile_combined(oldfile, newfile, impose_indent, indent_size, strict_indent, _impose_whitespace,
-                                case_dict,
-                                _impose_replacements, cstyle, whitespace, whitespace_dict, llength,
-                                strip_comments, format_decl, orig_filename, indent_fypp, indent_mod)
-
+        reformat_ffile_combined(
+            oldfile, newfile, impose_indent, indent_size, strict_indent, _impose_whitespace,
+            case_dict,
+            _impose_replacements, cstyle, whitespace, whitespace_dict, llength,
+            strip_comments, format_decl, orig_filename, indent_fypp, indent_mod
+            )
 
     outfile.write(newfile.getvalue())
 
 
-def reformat_ffile_combined(infile, outfile, impose_indent=True, indent_size=3, strict_indent=False, impose_whitespace=True,
-                            case_dict={},
-                            impose_replacements=False, cstyle=False, whitespace=2, whitespace_dict={}, llength=132,
-                            strip_comments=False, format_decl=False, orig_filename=None, indent_fypp=True, indent_mod=True):
+def reformat_ffile_combined(
+    infile, outfile, impose_indent=True, indent_size=3, strict_indent=False, impose_whitespace=True,
+    case_dict={},
+    impose_replacements=False, cstyle=False, whitespace=2, whitespace_dict={}, llength=132,
+    strip_comments=False, format_decl=False, orig_filename=None, indent_fypp=True, indent_mod=True
+    ):
 
     if not orig_filename:
         orig_filename = infile.name
@@ -1472,13 +1270,14 @@ def reformat_ffile_combined(infile, outfile, impose_indent=True, indent_size=3, 
     if not impose_indent:
         indent_fypp = False
 
-
     infile.seek(0)
     req_indents, first_indent, has_fypp = inspect_ffile_format(
-        infile, indent_size, strict_indent, indent_fypp, orig_filename)
+        infile, indent_size, strict_indent, indent_fypp, orig_filename
+    )
     infile.seek(0)
 
-    if not has_fypp: indent_fypp = False
+    if not has_fypp:
+        indent_fypp = False
 
     scope_parser = build_scope_parser(fypp=indent_fypp, mod=indent_mod)
 
@@ -1514,21 +1313,24 @@ def reformat_ffile_combined(infile, outfile, impose_indent=True, indent_size=3, 
         orig_lines = lines
 
         f_line, lines, is_omp_conditional = preprocess_omp(
-            f_line, lines)
+            f_line, lines
+        )
         f_line, lines, label = preprocess_labels(f_line, lines)
 
         if indent_special != 3:
             indent = [0] * len(lines)
         else:
-            indent = [len(l) - len((l.lstrip(' ')).lstrip('&'))  for l in lines]
+            indent = [len(l) - len((l.lstrip(' ')).lstrip('&')) for l in lines]
 
         comment_lines = format_comments(lines, comments, strip_comments)
 
         auto_align, auto_format, in_format_off_block = parse_fprettify_directives(
-            lines, comment_lines, in_format_off_block, orig_filename, stream.line_nr)
+            lines, comment_lines, in_format_off_block, orig_filename, stream.line_nr
+        )
 
         lines, do_format, prev_indent, is_blank, is_special = preprocess_line(
-            f_line, lines, comments, orig_filename, stream.line_nr, indent_fypp)
+            f_line, lines, comments, orig_filename, stream.line_nr, indent_fypp
+        )
 
         if is_special[0]:
             indent_special = 3
@@ -1541,7 +1343,7 @@ def reformat_ffile_combined(infile, outfile, impose_indent=True, indent_size=3, 
         if (not do_format):
             if indent_special == 2:
                 # inherit indent from previous line
-                indent[:] = [indenter.get_fline_indent()]*len(indent)
+                indent[:] = [indenter.get_fline_indent()] * len(indent)
             elif indent_special == 0:
                 indent_special = 1
         else:
@@ -1552,7 +1354,8 @@ def reformat_ffile_combined(infile, outfile, impose_indent=True, indent_size=3, 
                 manual_lines_indent = []
 
             lines, pre_ampersand, ampersand_sep = remove_pre_ampersands(
-                lines, is_special, orig_filename, stream.line_nr)
+                lines, is_special, orig_filename, stream.line_nr
+            )
 
             linebreak_pos = get_linebreak_pos(lines, filter_fypp=not indent_fypp)
 
@@ -1567,7 +1370,8 @@ def reformat_ffile_combined(infile, outfile, impose_indent=True, indent_size=3, 
             if impose_whitespace:
                 lines = format_single_fline(
                     f_line, whitespace, whitespace_dict, linebreak_pos, ampersand_sep,
-                    scope_parser, format_decl, orig_filename, stream.line_nr, auto_format)
+                    scope_parser, format_decl, orig_filename, stream.line_nr, auto_format
+                )
 
                 lines = append_comments(lines, comment_lines, is_special)
 
@@ -1577,7 +1381,8 @@ def reformat_ffile_combined(infile, outfile, impose_indent=True, indent_size=3, 
             if indent_special != 3:
                 indenter.process_lines_of_fline(
                     f_line, lines, rel_indent, indent_size,
-                    stream.line_nr, indent_fypp, manual_lines_indent)
+                    stream.line_nr, indent_fypp, manual_lines_indent
+                )
                 indent = indenter.get_lines_indent()
 
             lines, indent = prepend_ampersands(lines, indent, pre_ampersand)
@@ -1595,8 +1400,10 @@ def reformat_ffile_combined(infile, outfile, impose_indent=True, indent_size=3, 
             if indent[0] < len(label):
                 indent = [ind + len(label) - indent[0] for ind in indent]
 
-        write_formatted_line(outfile, indent, lines, orig_lines, indent_special, llength,
-                             use_same_line, is_omp_conditional, label, orig_filename, stream.line_nr)
+        write_formatted_line(
+            outfile, indent, lines, orig_lines, indent_special, llength,
+            use_same_line, is_omp_conditional, label, orig_filename, stream.line_nr
+            )
 
         do_indent, use_same_line = pass_defaults_to_next_line(f_line)
 
@@ -1608,7 +1415,8 @@ def reformat_ffile_combined(infile, outfile, impose_indent=True, indent_size=3, 
 
         # rm subsequent blank lines
         skip_blank = EMPTY_RE.search(
-            f_line) and not any(comments) and not is_omp_conditional and not label
+            f_line
+        ) and not any(comments) and not is_omp_conditional and not label
 
 
 def format_comments(lines, comments, strip_comments):
@@ -1619,7 +1427,7 @@ def format_comments(lines, comments, strip_comments):
             if strip_comments:
                 sep = not comment.strip() == line.strip()
             else:
-                line_minus_comment = line.replace(comment,"")
+                line_minus_comment = line.replace(comment, "")
                 sep = len(line_minus_comment.rstrip('\n')) - len(line_minus_comment.rstrip())
         else:
             sep = 0
@@ -1636,7 +1444,8 @@ def parse_fprettify_directives(lines, comment_lines, in_format_off_block, filena
     """
     auto_align = not any(NO_ALIGN_RE.search(_) for _ in lines)
     auto_format = not (in_format_off_block or any(
-        _.lstrip().startswith('!&') for _ in comment_lines))
+        _.lstrip().startswith('!&') for _ in comment_lines
+    ))
     if not auto_format:
         auto_align = False
     if (len(lines)) == 1:
@@ -1653,7 +1462,8 @@ def parse_fprettify_directives(lines, comment_lines, in_format_off_block, filena
                 in_format_off_block = False
         if not valid_directive:
             raise FprettifyParseException(
-                FORMATTER_ERROR_MESSAGE, filename, line_nr)
+                FORMATTER_ERROR_MESSAGE, filename, line_nr
+            )
 
     return [auto_align, auto_format, in_format_off_block]
 
@@ -1668,6 +1478,7 @@ def preprocess_omp(f_line, lines):
 
     return [f_line, lines, is_omp_conditional]
 
+
 def preprocess_labels(f_line, lines):
     """remove statement labels"""
 
@@ -1678,10 +1489,11 @@ def preprocess_labels(f_line, lines):
         label = ''
 
     if label:
-        f_line = STATEMENT_LABEL_RE.sub(len(label)*' ', f_line, count=1)
-        lines[0] = STATEMENT_LABEL_RE.sub(len(label)*' ', lines[0], count=1)
+        f_line = STATEMENT_LABEL_RE.sub(len(label) * ' ', f_line, count=1)
+        lines[0] = STATEMENT_LABEL_RE.sub(len(label) * ' ', lines[0], count=1)
 
     return [f_line, lines, label]
+
 
 def preprocess_line(f_line, lines, comments, filename, line_nr, indent_fypp):
     """preprocess lines: identification and formatting of special cases"""
@@ -1691,7 +1503,7 @@ def preprocess_line(f_line, lines, comments, filename, line_nr, indent_fypp):
 
     # is_special: special directives that should not be treated as Fortran
     # currently supported: fypp preprocessor directives or comments for FORD documentation
-    is_special = [False]*len(lines)
+    is_special = [False] * len(lines)
 
     for pos, line in enumerate(lines):
         line_strip = line.lstrip()
@@ -1702,7 +1514,8 @@ def preprocess_line(f_line, lines, comments, filename, line_nr, indent_fypp):
             is_special[pos] = FYPP_LINE_RE.search(line_strip) or line_strip.startswith('!!')
 
     # if first line is special, all lines should be special
-    if is_special[0]: is_special = [True]*len(lines)
+    if is_special[0]:
+        is_special = [True] * len(lines)
 
     if EMPTY_RE.search(f_line):  # empty lines including comment lines
         if any(comments):
@@ -1754,7 +1567,8 @@ def append_comments(lines, comment_lines, is_special):
     for pos, (line, comment) in enumerate(zip(lines, comment_lines)):
         if pos < len(lines) - 1:
             has_nl = True  # has next line
-            if not line.strip() and not is_special[pos]: comment = comment.lstrip()
+            if not line.strip() and not is_special[pos]:
+                comment = comment.lstrip()
         else:
             has_nl = not re.search(EOL_SC, line)
         lines[pos] = lines[pos].rstrip(' ') + comment + '\n' * has_nl
@@ -1810,7 +1624,8 @@ def remove_pre_ampersands(lines, is_special, filename, line_nr):
             m = re.search(r'(\s*)&[\s]*(?:!.*)?$', lines[pos - 1])
             if not m:
                 raise FprettifyParseException(
-                    "Bad continuation line format", filename, line_nr)
+                    "Bad continuation line format", filename, line_nr
+                )
             sep = len(m.group(1))
 
             ampersand_sep.append(sep)
@@ -1857,26 +1672,34 @@ def write_formatted_line(outfile, indent, lines, orig_lines, indent_special, lle
 
         if label:
             label_use = label
-            label = '' # no label for continuation lines
+            label = ''  # no label for continuation lines
         else:
             label_use = ''
 
-        if ind_use + line_length <= (llength+1):  # llength (default 132) plus 1 newline char
-            outfile.write('!$ ' * is_omp_conditional + label_use +
-                          ' ' * (ind_use - 3 * is_omp_conditional - len(label_use) +
-                                 len(line) - len(line.lstrip(' '))) +
-                          line.lstrip(' '))
-        elif line_length <= (llength+1):
-            outfile.write('!$ ' * is_omp_conditional + label_use + ' ' *
-                          ((llength+1) - 3 * is_omp_conditional - len(label_use) -
-                           len(line.lstrip(' '))) + line.lstrip(' '))
+        if ind_use + line_length <= (llength + 1):  # llength (default 132) plus 1 newline char
+            outfile.write(
+                '!$ ' * is_omp_conditional + label_use +
+                ' ' * (ind_use - 3 * is_omp_conditional - len(label_use) +
+                       len(line) - len(line.lstrip(' '))) +
+                line.lstrip(' ')
+                )
+        elif line_length <= (llength + 1):
+            outfile.write(
+                '!$ ' * is_omp_conditional + label_use + ' ' *
+                ((llength + 1) - 3 * is_omp_conditional - len(label_use) -
+                 len(line.lstrip(' '))) + line.lstrip(' ')
+                )
 
-            log_message(LINESPLIT_MESSAGE+" (limit: "+str(llength)+")", "warning",
-                        filename, line_nr)
+            log_message(
+                LINESPLIT_MESSAGE + " (limit: " + str(llength) + ")", "warning",
+                filename, line_nr
+                )
         else:
             outfile.write(orig_line)
-            log_message(LINESPLIT_MESSAGE+" (limit: "+str(llength)+")", "warning",
-                        filename, line_nr)
+            log_message(
+                LINESPLIT_MESSAGE + " (limit: " + str(llength) + ")", "warning",
+                filename, line_nr
+                )
 
 
 def get_curr_delim(line, pos):
@@ -1893,7 +1716,8 @@ def set_fprettify_logger(level):
     stream_handler = logging.StreamHandler()
     stream_handler.setLevel(level)
     formatter = logging.Formatter(
-        '%(levelname)s: File %(ffilename)s, line %(fline)s\n    %(message)s')
+        '%(levelname)s: File %(ffilename)s, line %(fline)s\n    %(message)s'
+    )
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
 
@@ -1937,94 +1761,148 @@ def run(argv=sys.argv):  # pragma: no cover
             config_file = os.path.join(dir, '.fprettify.rc')
             if os.path.isfile(config_file):
                 config_file_list.insert(0, config_file)
-            parent=os.path.dirname(dir)
+            parent = os.path.dirname(dir)
             if parent == dir:
                 break
             dir = parent
         return config_file_list
 
-    arguments = {'prog': argv[0],
-                 'description': 'Auto-format modern Fortran source files.',
-                 'formatter_class': argparse.ArgumentDefaultsHelpFormatter}
+    arguments = {
+        'prog': argv[0],
+        'description': 'Auto-format modern Fortran source files.',
+        'formatter_class': argparse.ArgumentDefaultsHelpFormatter
+    }
 
     if argparse.__name__ == "configargparse":
         arguments['args_for_setting_config_path'] = ['-c', '--config-file']
-        arguments['description'] = arguments['description'] + " Config files ('.fprettify.rc') in the home (~) directory and any such files located in parent directories of the input file will be used. When the standard input is used, the search is started from the current directory."
+        arguments['description'] = arguments[
+                                       'description'] + " Config files ('.fprettify.rc') in the home (~) directory and any such files located in parent directories of the input file will be used. When the standard input is used, the search is started from the current directory."
 
     def get_arg_parser(args):
         """helper function to create the parser object"""
         parser = argparse.ArgumentParser(**args)
 
-        parser.add_argument("-i", "--indent", type=int, default=3,
-                            help="relative indentation width")
-        parser.add_argument("-l", "--line-length", type=int, default=132,
-                            help="column after which a line should end, viz. -ffree-line-length-n for GCC")
-        parser.add_argument("-w", "--whitespace", type=int,
-                            choices=range(0, 5), default=2, help="Presets for the amount of whitespace - "
-                                                                 "   0: minimal whitespace"
-                                                                 " | 1: operators (except arithmetic), print/read"
-                                                                 " | 2: operators, print/read, plus/minus"
-                                                                 " | 3: operators, print/read, plus/minus, muliply/divide"
-                                                                 " | 4: operators, print/read, plus/minus, muliply/divide, type component selector")
-        parser.add_argument("--whitespace-comma", type=str2bool, nargs="?", default="None", const=True,
-                            help="boolean, en-/disable whitespace for comma/semicolons")
-        parser.add_argument("--whitespace-assignment", type=str2bool, nargs="?", default="None", const=True,
-                            help="boolean, en-/disable whitespace for assignments")
-        parser.add_argument("--whitespace-decl", type=str2bool, nargs="?", default="None", const=True,
-                            help="boolean, en-/disable whitespace for declarations (requires '--enable-decl')")
-        parser.add_argument("--whitespace-relational", type=str2bool, nargs="?", default="None", const=True,
-                            help="boolean, en-/disable whitespace for relational operators")
-        parser.add_argument("--whitespace-logical", type=str2bool, nargs="?", default="None", const=True,
-                            help="boolean, en-/disable whitespace for logical operators")
-        parser.add_argument("--whitespace-plusminus", type=str2bool, nargs="?", default="None", const=True,
-                            help="boolean, en-/disable whitespace for plus/minus arithmetic")
-        parser.add_argument("--whitespace-multdiv", type=str2bool, nargs="?", default="None", const=True,
-                            help="boolean, en-/disable whitespace for multiply/divide arithmetic")
-        parser.add_argument("--whitespace-print", type=str2bool, nargs="?", default="None", const=True,
-                            help="boolean, en-/disable whitespace for print/read statements")
-        parser.add_argument("--whitespace-type", type=str2bool, nargs="?", default="None", const=True,
-                            help="boolean, en-/disable whitespace for select type components")
-        parser.add_argument("--whitespace-intrinsics", type=str2bool, nargs="?", default="None", const=True,
-                            help="boolean, en-/disable whitespace for intrinsics like if/write/close")
+        parser.add_argument(
+            "-i", "--indent", type=int, default=3,
+            help="relative indentation width"
+            )
+        parser.add_argument(
+            "-l", "--line-length", type=int, default=132,
+            help="column after which a line should end, viz. -ffree-line-length-n for GCC"
+            )
+        parser.add_argument(
+            "-w", "--whitespace", type=int,
+            choices=range(0, 5), default=2, help="Presets for the amount of whitespace - "
+                                                 "   0: minimal whitespace"
+                                                 " | 1: operators (except arithmetic), print/read"
+                                                 " | 2: operators, print/read, plus/minus"
+                                                 " | 3: operators, print/read, plus/minus, muliply/divide"
+                                                 " | 4: operators, print/read, plus/minus, muliply/divide, type component selector"
+            )
+        parser.add_argument(
+            "--whitespace-comma", type=str2bool, nargs="?", default="None", const=True,
+            help="boolean, en-/disable whitespace for comma/semicolons"
+            )
+        parser.add_argument(
+            "--whitespace-assignment", type=str2bool, nargs="?", default="None", const=True,
+            help="boolean, en-/disable whitespace for assignments"
+            )
+        parser.add_argument(
+            "--whitespace-decl", type=str2bool, nargs="?", default="None", const=True,
+            help="boolean, en-/disable whitespace for declarations (requires '--enable-decl')"
+            )
+        parser.add_argument(
+            "--whitespace-relational", type=str2bool, nargs="?", default="None", const=True,
+            help="boolean, en-/disable whitespace for relational operators"
+            )
+        parser.add_argument(
+            "--whitespace-logical", type=str2bool, nargs="?", default="None", const=True,
+            help="boolean, en-/disable whitespace for logical operators"
+            )
+        parser.add_argument(
+            "--whitespace-plusminus", type=str2bool, nargs="?", default="None", const=True,
+            help="boolean, en-/disable whitespace for plus/minus arithmetic"
+            )
+        parser.add_argument(
+            "--whitespace-multdiv", type=str2bool, nargs="?", default="None", const=True,
+            help="boolean, en-/disable whitespace for multiply/divide arithmetic"
+            )
+        parser.add_argument(
+            "--whitespace-print", type=str2bool, nargs="?", default="None", const=True,
+            help="boolean, en-/disable whitespace for print/read statements"
+            )
+        parser.add_argument(
+            "--whitespace-type", type=str2bool, nargs="?", default="None", const=True,
+            help="boolean, en-/disable whitespace for select type components"
+            )
+        parser.add_argument(
+            "--whitespace-intrinsics", type=str2bool, nargs="?", default="None", const=True,
+            help="boolean, en-/disable whitespace for intrinsics like if/write/close"
+            )
         parser.add_argument("--strict-indent", action='store_true', default=False, help="strictly impose indentation even for nested loops")
         parser.add_argument("--enable-decl", action="store_true", default=False, help="enable whitespace formatting of declarations ('::' operator).")
         parser.add_argument("--disable-indent", action='store_true', default=False, help="don't impose indentation")
         parser.add_argument("--disable-whitespace", action='store_true', default=False, help="don't impose whitespace formatting")
         parser.add_argument("--enable-replacements", action='store_true', default=False, help="replace relational operators (e.g. '.lt.' <--> '<')")
         parser.add_argument("--c-relations", action='store_true', default=False, help="C-style relational operators ('<', '<=', ...)")
-        parser.add_argument("--case", nargs=4, default=[0,0,0,0], type=int, help="Enable letter case formatting of intrinsics by specifying which of "
-                            "keywords, procedures/modules, operators and constants (in this order) should be lowercased or uppercased - "
-                            "   0: do nothing"
-                            " | 1: lowercase"
-                            " | 2: uppercase")
+        parser.add_argument(
+            "--case", nargs=4, default=[0, 0, 0, 0], type=int, help="Enable letter case formatting of intrinsics by specifying which of "
+                                                                    "keywords, procedures/modules, operators and constants (in this order) should be lowercased or uppercased - "
+                                                                    "   0: do nothing"
+                                                                    " | 1: lowercase"
+                                                                    " | 2: uppercase"
+            )
 
         parser.add_argument("--strip-comments", action='store_true', default=False, help="strip whitespaces before comments")
-        parser.add_argument('--disable-fypp', action='store_true', default=False,
-                            help="Disables the indentation of fypp preprocessor blocks.")
-        parser.add_argument('--disable-indent-mod', action='store_true', default=False,
-                            help="Disables the indentation after module / program.")
+        parser.add_argument(
+            '--disable-fypp', action='store_true', default=False,
+            help="Disables the indentation of fypp preprocessor blocks."
+            )
+        parser.add_argument(
+            '--disable-indent-mod', action='store_true', default=False,
+            help="Disables the indentation after module / program."
+            )
 
-        parser.add_argument("-d","--diff", action='store_true', default=False,
-                             help="Write file differences to stdout instead of formatting inplace")
-        parser.add_argument("-s", "--stdout", action='store_true', default=False,
-                            help="Write to stdout instead of formatting inplace")
+        parser.add_argument(
+            "-d", "--diff", action='store_true', default=False,
+            help="Write file differences to stdout instead of formatting inplace"
+            )
+        parser.add_argument(
+            "-s", "--stdout", action='store_true', default=False,
+            help="Write to stdout instead of formatting inplace"
+            )
 
         group = parser.add_mutually_exclusive_group()
-        group.add_argument("-S", "--silent", "--no-report-errors", action='store_true',
-                           default=False, help="Don't write any errors or warnings to stderr")
-        group.add_argument("-D", "--debug", action='store_true',
-                           default=False, help=argparse.SUPPRESS)
-        parser.add_argument("path", type=str, nargs='*',
-                            help="Paths to files to be formatted inplace. If no paths are given, stdin (-) is used by default. Path can be a directory if --recursive is used.", default=['-'])
-        parser.add_argument('-r', '--recursive', action='store_true',
-                            default=False, help="Recursively auto-format all Fortran files in subdirectories of specified path; recognized filename extensions: {}". format(", ".join(FORTRAN_EXTENSIONS)))
-        parser.add_argument('-e', '--exclude', action='append',
-                            default=[], type=str,
-                            help="File or directory patterns to be excluded when searching for Fortran files to format")
-        parser.add_argument('-f', '--fortran', type=str, action='append', default=[],
-                            help="Overrides default fortran extensions recognized by --recursive. Repeat this option to specify more than one extension.")
-        parser.add_argument('--version', action='version',
-                            version='%(prog)s 0.3.7')
+        group.add_argument(
+            "-S", "--silent", "--no-report-errors", action='store_true',
+            default=False, help="Don't write any errors or warnings to stderr"
+            )
+        group.add_argument(
+            "-D", "--debug", action='store_true',
+            default=False, help=argparse.SUPPRESS
+            )
+        parser.add_argument(
+            "path", type=str, nargs='*',
+            help="Paths to files to be formatted inplace. If no paths are given, stdin (-) is used by default. Path can be a directory if --recursive is used.", default=['-']
+            )
+        parser.add_argument(
+            '-r', '--recursive', action='store_true',
+            default=False,
+            help="Recursively auto-format all Fortran files in subdirectories of specified path; recognized filename extensions: {}".format(", ".join(FORTRAN_EXTENSIONS))
+            )
+        parser.add_argument(
+            '-e', '--exclude', action='append',
+            default=[], type=str,
+            help="File or directory patterns to be excluded when searching for Fortran files to format"
+            )
+        parser.add_argument(
+            '-f', '--fortran', type=str, action='append', default=[],
+            help="Overrides default fortran extensions recognized by --recursive. Repeat this option to specify more than one extension."
+            )
+        parser.add_argument(
+            '--version', action='version',
+            version='%(prog)s 0.3.7'
+            )
         return parser
 
     parser = get_arg_parser(arguments)
@@ -2057,8 +1935,10 @@ def run(argv=sys.argv):  # pragma: no cover
                 sys.exit(1)
         else:
             if not os.path.exists(directory):
-                sys.stderr.write("directory " + directory +
-                                 " does not exist!\n")
+                sys.stderr.write(
+                    "directory " + directory +
+                    " does not exist!\n"
+                    )
                 sys.exit(1)
             if not os.path.isfile(directory) and directory != '-' and not args.recursive:
                 sys.stderr.write("file " + directory + " does not exist!\n")
@@ -2075,19 +1955,21 @@ def run(argv=sys.argv):  # pragma: no cover
 
             from fnmatch import fnmatch
 
-            for dirpath, dirnames, files in os.walk(directory,topdown=True):
+            for dirpath, dirnames, files in os.walk(directory, topdown=True):
 
                 # Prune excluded patterns from list of child directories
                 dirnames[:] = [dirname for dirname in dirnames if not any(
-                    [fnmatch(dirname,exclude_pattern) or fnmatch(os.path.join(dirpath,dirname),exclude_pattern)
-                            for exclude_pattern in args.exclude]
+                    [fnmatch(dirname, exclude_pattern) or fnmatch(os.path.join(dirpath, dirname), exclude_pattern)
+                     for exclude_pattern in args.exclude]
                 )]
 
                 for ffile in [os.path.join(dirpath, f) for f in files
                               if any(f.endswith(_) for _ in ext)
-                              and not any([
-                                  fnmatch(f,exclude_pattern)
-                                  for exclude_pattern in args.exclude])]:
+                                 and not any(
+                        [
+                            fnmatch(f, exclude_pattern)
+                            for exclude_pattern in args.exclude]
+                    )]:
                     filenames.append(ffile)
 
         for filename in filenames:
@@ -2101,14 +1983,14 @@ def run(argv=sys.argv):  # pragma: no cover
             ws_dict = build_ws_dict(file_args)
 
             case_dict = {
-                    'keywords' : file_args.case[0],
-                    'procedures' : file_args.case[1],
-                    'operators' : file_args.case[2],
-                    'constants' : file_args.case[3]
-                    }
+                'keywords': file_args.case[0],
+                'procedures': file_args.case[1],
+                'operators': file_args.case[2],
+                'constants': file_args.case[3]
+            }
 
             stdout = file_args.stdout or directory == '-'
-            diffonly=file_args.diff
+            diffonly = file_args.diff
 
             if file_args.debug:
                 level = logging.DEBUG
@@ -2120,23 +2002,25 @@ def run(argv=sys.argv):  # pragma: no cover
             set_fprettify_logger(level)
 
             try:
-                reformat_inplace(filename,
-                                 stdout=stdout,
-                                 diffonly=diffonly,
-                                 impose_indent=not file_args.disable_indent,
-                                 indent_size=file_args.indent,
-                                 strict_indent=file_args.strict_indent,
-                                 impose_whitespace=not file_args.disable_whitespace,
-                                 impose_replacements=file_args.enable_replacements,
-                                 cstyle=file_args.c_relations,
-                                 case_dict=case_dict,
-                                 whitespace=file_args.whitespace,
-                                 whitespace_dict=ws_dict,
-                                 llength=1024 if file_args.line_length == 0 else file_args.line_length,
-                                 strip_comments=file_args.strip_comments,
-                                 format_decl=file_args.enable_decl,
-                                 indent_fypp=not file_args.disable_fypp,
-                                 indent_mod=not file_args.disable_indent_mod)
+                reformat_inplace(
+                    filename,
+                    stdout=stdout,
+                    diffonly=diffonly,
+                    impose_indent=not file_args.disable_indent,
+                    indent_size=file_args.indent,
+                    strict_indent=file_args.strict_indent,
+                    impose_whitespace=not file_args.disable_whitespace,
+                    impose_replacements=file_args.enable_replacements,
+                    cstyle=file_args.c_relations,
+                    case_dict=case_dict,
+                    whitespace=file_args.whitespace,
+                    whitespace_dict=ws_dict,
+                    llength=1024 if file_args.line_length == 0 else file_args.line_length,
+                    strip_comments=file_args.strip_comments,
+                    format_decl=file_args.enable_decl,
+                    indent_fypp=not file_args.disable_fypp,
+                    indent_mod=not file_args.disable_indent_mod
+                    )
             except FprettifyException as e:
                 log_exception(e, "Fatal error occured")
                 sys.exit(1)

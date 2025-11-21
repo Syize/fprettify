@@ -33,11 +33,14 @@ import difflib
 import subprocess
 import inspect
 
+import fprettify.constants
+from fprettify.exception import FprettifyParseException
+
 sys.stderr = io.TextIOWrapper(
     sys.stderr.detach(), encoding='UTF-8', line_buffering=True)
 
 import fprettify
-from fprettify.fparse_utils import FprettifyParseException, FprettifyInternalException
+from fprettify.exception import FprettifyInternalException
 
 
 def joinpath(path1, path2):
@@ -98,7 +101,7 @@ class FPrettifyTestCase(unittest.TestCase):
 
         eprint("-" * 70)
         eprint("recognized Fortran files")
-        eprint(", ".join(fprettify.FORTRAN_EXTENSIONS))
+        eprint(", ".join(fprettify.constants.FORTRAN_EXTENSIONS))
         eprint("-" * 70)
         eprint("Testing with Fortran files in " + BEFORE_DIR)
         eprint("Writing formatted Fortran files to " + AFTER_DIR)
@@ -996,6 +999,6 @@ if os.path.exists(FAILED_FILE):  # pragma: no cover
 
 # this prepares FPrettifyTestCase class when module is loaded by unittest
 for dirpath, _, filenames in os.walk(BEFORE_DIR):
-    for example in [f for f in filenames if any(f.endswith(_) for _ in fprettify.FORTRAN_EXTENSIONS)]:
+    for example in [f for f in filenames if any(f.endswith(_) for _ in fprettify.constants.FORTRAN_EXTENSIONS)]:
         rel_dirpath = os.path.relpath(dirpath, start=BEFORE_DIR)
         addtestmethod(FPrettifyTestCase, rel_dirpath, example)
