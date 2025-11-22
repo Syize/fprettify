@@ -104,7 +104,8 @@ sys.stdout = io.TextIOWrapper(
     sys.stdout.detach(), encoding='UTF-8', line_buffering=True
 )
 
-from .fparse_utils import (InputStream, CharFilter, parser_re)
+from .fparse_utils import (InputStream, parser_re)
+from .core import CharFilter
 
 # recognize fortran files by extension
 FORTRAN_EXTENSIONS += [_.upper() for _ in FORTRAN_EXTENSIONS]

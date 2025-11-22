@@ -21,7 +21,8 @@
 
 from collections import deque
 
-from .constants import NOTFORTRAN_LINE_RE, NOTFORTRAN_FYPP_LINE_RE, FYPP_CLOSE_RE, FYPP_OPEN_RE, FYPP_LINE_RE, OMP_COND_RE
+from . import CharFilter
+from .constants import NOTFORTRAN_LINE_RE, NOTFORTRAN_FYPP_LINE_RE, FYPP_LINE_RE, OMP_COND_RE
 
 class fline_parser(object):
     def __init__(self):
@@ -40,90 +41,6 @@ class parser_re(fline_parser):
     def split(self, line):
         return self._re.split(line)
 
-class CharFilter(object):
-    """
-    An iterator to wrap the iterator returned by `enumerate(string)`
-    and ignore comments and characters inside strings
-    """
-
-    def __init__(self, string, filter_comments=True, filter_strings=True,
-                 filter_fypp=True):
-        self._content = string
-        self._it = enumerate(self._content)
-        self._instring = ''
-        self._infypp = False
-        self._incomment = ''
-        self._instring = ''
-        self._filter_comments = filter_comments
-        self._filter_strings = filter_strings
-        if filter_fypp:
-            self._notfortran_re = NOTFORTRAN_LINE_RE
-        else:
-            self._notfortran_re = NOTFORTRAN_FYPP_LINE_RE
-
-
-    def update(self, string, filter_comments=True, filter_strings=True,
-               filter_fypp=True):
-        self._content = string
-        self._it = enumerate(self._content)
-        self._filter_comments = filter_comments
-        self._filter_strings = filter_strings
-        if filter_fypp:
-            self._notfortran_re = NOTFORTRAN_LINE_RE
-        else:
-            self._notfortran_re = NOTFORTRAN_FYPP_LINE_RE
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-
-        pos, char = next(self._it)
-
-        char2 = self._content[pos:pos+2]
-
-        if not self._instring:
-            if not self._incomment:
-                if FYPP_OPEN_RE.search(char2):
-                    self._instring = char2
-                    self._infypp = True
-                elif (self._notfortran_re.search(char2)):
-                    self._incomment = char
-                elif char in ['"', "'"]:
-                    self._instring = char
-        else:
-            if self._infypp:
-                if FYPP_CLOSE_RE.search(char2):
-                    self._instring = ''
-                    self._infypp = False
-                    if self._filter_strings:
-                        self.__next__()
-                        return self.__next__()
-
-            elif char in ['"', "'"]:
-                if self._instring == char:
-                    self._instring = ''
-                    if self._filter_strings:
-                        return self.__next__()
-
-        if self._filter_comments:
-            if self._incomment:
-                raise StopIteration
-
-        if self._filter_strings:
-            if self._instring:
-                return self.__next__()
-
-        return (pos, char)
-
-    def filter_all(self):
-        filtered_str = ''
-        for pos, char in self:
-            filtered_str += char
-        return filtered_str
-
-    def instring(self):
-        return self._instring
 
 class InputStream(object):
     """Class to read logical Fortran lines from a Fortran file."""
@@ -196,7 +113,7 @@ class InputStream(object):
                        self.line_buffer.append(line)
                        self.what_omp.append(what_omp)
                    else:
-                       for pos_add, char in CharFilter(line[pos+1:], filter_comments=False):
+                       for pos_add, char in CharFilter(line[pos + 1:], filter_comments=False):
                            char2 = line[pos+1+pos_add:pos+3+pos_add]
                            if self.notfortran_re.search(char2):
                                self.endpos.append(pos + pos_add - line_start)
