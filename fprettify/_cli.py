@@ -205,7 +205,7 @@ def get_arg_parser(args={}):
     parser.add_argument(
         "--case",
         nargs=4,
-        default=[0, 0, 0, 0],
+        default=[1, 1, 1, 1],
         type=int,
         help="Enable letter case formatting of intrinsics by specifying which of "
              "keywords, procedures/modules, operators and constants (in this order) should be lowercased or uppercased - "

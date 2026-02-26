@@ -8,7 +8,8 @@
 
 - Split huge `__init__.py` into multiple files.
 - Change build system to meson.
-- Add indentation to all `if` and `do` block.
+- Always add indentation to all `if` and `do` block.
+- Always change keywords to lowercase.
 
 ## Install
 
