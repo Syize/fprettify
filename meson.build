@@ -1,0 +1,11 @@
+project(
+    'fprettify',
+    version: '0.3.7',
+    license: 'GPL-3.0-or-later',
+    meson_version: '>=0.64.0',
+    default_options: ['warning_level=2'],
+)
+
+py3 = import('python').find_installation(pure: true)
+
+subdir('fprettify')

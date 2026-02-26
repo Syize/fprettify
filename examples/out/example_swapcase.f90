@@ -177,15 +177,15 @@ program example_prog
       do r = 1, 3
          write (*, *) r
          do k = 1, 4
-         do l = 1, 3
-         do i = 4, 5
-            do my_integer = 1, 1
-            do j = 1, 2
-               write (*, *) test_function(m, r, k, l) + i
+            do l = 1, 3
+               do i = 4, 5
+                  do my_integer = 1, 1
+                     do j = 1, 2
+                        write (*, *) test_function(m, r, k, l) + i
+                     end do
+                  end do
+               end do
             end do
-            end do
-         end do
-         end do
          end do
       end do
    end do

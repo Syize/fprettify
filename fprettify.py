@@ -20,7 +20,7 @@
 
 """wrapper script to run fprettify"""
 
-from fprettify import run  # pragma: no cover
+from fprettify.cli import run
 
 if __name__ == "__main__":  # pragma: no cover
     run()

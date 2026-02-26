@@ -26,6 +26,12 @@ import os
 import subprocess
 import sys
 
+import fprettify.cli
+import fprettify.formatter
+import fprettify.log
+
+import fprettify._cli
+
 sys.stderr = io.TextIOWrapper(
     sys.stderr.detach(), encoding="UTF-8", line_buffering=True
 )
@@ -33,7 +39,7 @@ sys.stderr = io.TextIOWrapper(
 import fprettify
 from fprettify.tests.test_common import RUNSCRIPT, FprettifyTestCase
 
-fprettify.set_fprettify_logger(logging.ERROR)
+fprettify.log.set_fprettify_logger(logging.ERROR)
 
 
 class FprettifyUnitTestCase(FprettifyTestCase):
@@ -43,14 +49,14 @@ class FprettifyUnitTestCase(FprettifyTestCase):
         outstring_exp
         """
 
-        parser = fprettify.get_arg_parser()
+        parser = fprettify._cli.get_arg_parser()
         args = parser.parse_args(args)
-        args = fprettify.process_args(args)
+        args = fprettify._cli.process_args(args)
 
         outfile = io.StringIO()
         infile = io.StringIO(instring)
 
-        fprettify.reformat_ffile(infile, outfile, orig_filename="StringIO", **args)
+        fprettify.formatter.reformat_ffile(infile, outfile, orig_filename="StringIO", **args)
         outstring = outfile.getvalue()
         self.assertEqual(outstring_exp.rstrip(), outstring.rstrip())
 

@@ -18,7 +18,6 @@
 #    along with fprettify. If not, see <http://www.gnu.org/licenses/>.
 ###############################################################################
 
-
 import configparser
 import difflib
 import hashlib
@@ -32,6 +31,12 @@ import sys
 from datetime import datetime
 
 import fprettify
+import fprettify._cli
+import fprettify.cli
+import fprettify.exception
+import fprettify.formatter
+import fprettify.log
+import fprettify.re
 from fprettify.tests.test_common import _MYPATH, FprettifyTestCase, joinpath
 
 _TIMESTAMP = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -58,7 +63,7 @@ RESULT_FILE = joinpath(RESULT_DIR, r"expected_results")
 FAILED_FILE = joinpath(RESULT_DIR, r"failed_results")
 
 
-fprettify.set_fprettify_logger(logging.ERROR)
+fprettify.log.set_fprettify_logger(logging.ERROR)
 
 
 class FprettifyIntegrationTestCase(FprettifyTestCase):
@@ -86,7 +91,7 @@ class FprettifyIntegrationTestCase(FprettifyTestCase):
 
         FprettifyIntegrationTestCase.eprint("-" * 70)
         FprettifyIntegrationTestCase.eprint("recognized Fortran files")
-        FprettifyIntegrationTestCase.eprint(", ".join(fprettify.FORTRAN_EXTENSIONS))
+        FprettifyIntegrationTestCase.eprint(", ".join(fprettify.re.FORTRAN_EXTENSIONS))
         FprettifyIntegrationTestCase.eprint("-" * 70)
         FprettifyIntegrationTestCase.eprint(
             "Applying fprettify to Fortran files in " + TEST_EXT_DIR
@@ -190,15 +195,15 @@ def add_test_code(code_path, options):
     print(f"creating test cases from {code_path} ...")
     # dynamically create test cases from fortran files in test directory
 
-    parser = fprettify.get_arg_parser()
+    parser = fprettify._cli.get_arg_parser()
     args = parser.parse_args(shlex.split(options))
-    fprettify_args = fprettify.process_args(args)
+    fprettify_args = fprettify._cli.process_args(args)
 
     for dirpath, _, filenames in os.walk(joinpath(TEST_EXT_DIR, code_path)):
         for example in [
             f
             for f in filenames
-            if any(f.endswith(_) for _ in fprettify.FORTRAN_EXTENSIONS)
+            if any(f.endswith(_) for _ in fprettify.re.FORTRAN_EXTENSIONS)
         ]:
             rel_dirpath = os.path.relpath(dirpath, start=TEST_EXT_DIR)
 
@@ -247,7 +252,9 @@ def add_test_method(testcase, fpath, ffile, args):
 
         # apply fprettify
         try:
-            fprettify.reformat_inplace(example, **args)
+            fprettify.formatter.reformat_inplace(example, **args)
+
+            shutil.copy2(example, f"/home/syize/Documents/Fortran/fprettify/temp/{os.path.basename(example)}")
 
             # update outstring
             with io.open(example, "r", encoding="utf-8") as outfile:
@@ -260,20 +267,21 @@ def add_test_method(testcase, fpath, ffile, args):
             test_content = test_result(example, m.hexdigest())
 
             FprettifyIntegrationTestCase.n_success += 1
-        except fprettify.FprettifyParseException as e:
+        except fprettify.exception.FprettifyParseException as e:
             test_info = "parse error"
-            fprettify.log_exception(e, test_info, level="warning")
+            fprettify.log.log_exception(e, test_info, level="warning")
             test_content = test_result(example, test_info)
             FprettifyIntegrationTestCase.n_parsefail += 1
-        except fprettify.FprettifyInternalException as e:
+        except fprettify.exception.FprettifyInternalException as e:
             test_info = "internal error"
-            fprettify.log_exception(e, test_info, level="warning")
+            fprettify.log.log_exception(e, test_info, level="warning")
             test_content = test_result(example, test_info)
             FprettifyIntegrationTestCase.n_internalfail += 1
         except:  # pragma: no cover
             FprettifyIntegrationTestCase.n_unexpectedfail += 1
             raise
 
+        # print(test_content)
         # check that no changes other than whitespace changes or lower/upper case occured
         orig_stripped = normalize_line(instring)
         new_stripped = normalize_line(outstring)

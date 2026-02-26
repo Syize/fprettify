@@ -1,99 +1,6 @@
-# -*- coding: utf-8 -*-
-###############################################################################
-#    This file is part of fprettify.
-#    Copyright (C) 2016-2019 Patrick Seewald, CP2K developers group
-#
-#    fprettify is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
-#
-#    fprettify is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU General Public License for more details.
-#
-#    You should have received a copy of the GNU General Public License
-#    along with fprettify. If not, see <http://www.gnu.org/licenses/>.
-###############################################################################
-
-"""This is a collection of Fortran parsing utilities."""
-
-import re
 from collections import deque
 
-RE_FLAGS = re.IGNORECASE | re.UNICODE
-
-# FIXME bad ass regex!
-VAR_DECL_RE = re.compile(
-    r"^ *(?P<type>integer(?: *\* *[0-9]+)?|logical|character(?: *\* *[0-9]+)?|real(?: *\* *[0-9]+)?|complex(?: *\* *[0-9]+)?|type) *(?P<parameters>\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))? *(?P<attributes>(?: *, *[a-zA-Z_0-9]+(?: *\((?:[^()]+|\((?:[^()]+|\([^()]*\))*\))*\))?)+)? *(?P<dpnt>::)?(?P<vars>[^\n]+)\n?",
-    RE_FLAGS,
-)
-
-OMP_COND_RE = re.compile(r"^\s*(!\$ )", RE_FLAGS)
-OMP_DIR_RE = re.compile(r"^\s*(!\$OMP)", RE_FLAGS)
-
-# supported preprocessors
-FYPP_LINE_STR = r"^(#!|#:|\$:|@:)"
-FYPP_WITHOUT_PREPRO_STR = r"^(#!|\$:|@:)"
-CPP_STR = r"^#[^!:{}]"
-COMMENT_LINE_STR = r"^!"
-FYPP_OPEN_STR = r"(#{|\${|@{)"
-FYPP_CLOSE_STR = r"(}#|}\$|}@)"
-NOTFORTRAN_LINE_RE = re.compile(
-    r"(" + FYPP_LINE_STR + r"|" + CPP_STR + r"|" + COMMENT_LINE_STR + r")", RE_FLAGS
-)
-NOTFORTRAN_FYPP_LINE_RE = re.compile(
-    r"(" + CPP_STR + r"|" + COMMENT_LINE_STR + r")", RE_FLAGS
-)
-FYPP_LINE_RE = re.compile(FYPP_LINE_STR, RE_FLAGS)
-FYPP_WITHOUT_PREPRO_RE = re.compile(FYPP_WITHOUT_PREPRO_STR, RE_FLAGS)
-FYPP_OPEN_RE = re.compile(FYPP_OPEN_STR, RE_FLAGS)
-FYPP_CLOSE_RE = re.compile(FYPP_CLOSE_STR, RE_FLAGS)
-
-STR_OPEN_RE = re.compile(r"(" + FYPP_OPEN_STR + r"|" + r"'|\"|!)", RE_FLAGS)
-CPP_RE = re.compile(CPP_STR, RE_FLAGS)
-
-
-class fline_parser(object):
-    def __init__(self):
-        pass
-
-    def search(self, line):
-        pass
-
-
-class parser_re(fline_parser):
-    def __init__(self, regex, spec=True):
-        self._re = regex
-        self.spec = spec
-
-    def search(self, line):
-        return self._re.search(line)
-
-    def split(self, line):
-        return self._re.split(line)
-
-
-class FprettifyException(Exception):
-    """Base class for all custom exceptions"""
-
-    def __init__(self, msg, filename, line_nr):
-        super(FprettifyException, self).__init__(msg)
-        self.filename = filename
-        self.line_nr = line_nr
-
-
-class FprettifyParseException(FprettifyException):
-    """Exception for unparseable Fortran code (user's fault)."""
-
-    pass
-
-
-class FprettifyInternalException(FprettifyException):
-    """Exception for potential internal errors (fixme's)."""
-
-    pass
+from . import re as re_str
 
 
 class CharFilter(object):
@@ -114,9 +21,9 @@ class CharFilter(object):
         self._filter_comments = filter_comments
         self._filter_strings = filter_strings
         if filter_fypp:
-            self._notfortran_re = NOTFORTRAN_LINE_RE
+            self._notfortran_re = re_str.NOTFORTRAN_LINE_RE
         else:
-            self._notfortran_re = NOTFORTRAN_FYPP_LINE_RE
+            self._notfortran_re = re_str.NOTFORTRAN_FYPP_LINE_RE
 
     def update(
         self, string, filter_comments=True, filter_strings=True, filter_fypp=True
@@ -126,9 +33,9 @@ class CharFilter(object):
         self._filter_comments = filter_comments
         self._filter_strings = filter_strings
         if filter_fypp:
-            self._notfortran_re = NOTFORTRAN_LINE_RE
+            self._notfortran_re = re_str.NOTFORTRAN_LINE_RE
         else:
-            self._notfortran_re = NOTFORTRAN_FYPP_LINE_RE
+            self._notfortran_re = re_str.NOTFORTRAN_FYPP_LINE_RE
 
     def __iter__(self):
         return self
@@ -141,7 +48,7 @@ class CharFilter(object):
 
         if not self._instring:
             if not self._incomment:
-                if FYPP_OPEN_RE.search(char2):
+                if re_str.FYPP_OPEN_RE.search(char2):
                     self._instring = char2
                     self._infypp = True
                 elif self._notfortran_re.search(char2):
@@ -150,7 +57,7 @@ class CharFilter(object):
                     self._instring = char
         else:
             if self._infypp:
-                if FYPP_CLOSE_RE.search(char2):
+                if re_str.FYPP_CLOSE_RE.search(char2):
                     self._instring = ""
                     self._infypp = False
                     if self._filter_strings:
@@ -196,9 +103,9 @@ class InputStream(object):
         self.endpos = deque([])
         self.what_omp = deque([])
         if filter_fypp:
-            self.notfortran_re = NOTFORTRAN_LINE_RE
+            self.notfortran_re = re_str.NOTFORTRAN_LINE_RE
         else:
-            self.notfortran_re = NOTFORTRAN_FYPP_LINE_RE
+            self.notfortran_re = re_str.NOTFORTRAN_FYPP_LINE_RE
 
     def next_fortran_line(self):
         """Reads a group of connected lines (connected with &, separated by newline or semicolon)
@@ -221,7 +128,7 @@ class InputStream(object):
                 # convert OMP-conditional fortran statements into normal fortran statements
                 # but remember to convert them back
 
-                what_omp = OMP_COND_RE.search(line)
+                what_omp = re_str.OMP_COND_RE.search(line)
 
                 if what_omp:
                     what_omp = what_omp.group(1)
@@ -292,14 +199,14 @@ class InputStream(object):
 
             line_core = line_core.strip()
 
-            if line_core and not NOTFORTRAN_LINE_RE.search(line_core):
+            if line_core and not re_str.NOTFORTRAN_LINE_RE.search(line_core):
                 continuation = 0
             if line_core.endswith("&"):
                 continuation = 1
 
             if line_comments:
                 if (
-                    FYPP_LINE_RE.search(line[endpos + 1 : endpos + 3]) or fypp_cont
+                        re_str.FYPP_LINE_RE.search(line[endpos + 1 : endpos + 3]) or fypp_cont
                 ) and line_comments.strip()[-1] == "&":
                     fypp_cont = 1
                 else:
@@ -316,4 +223,7 @@ class InputStream(object):
             if not (continuation or fypp_cont):
                 break
 
-        return (joined_line, comments, lines)
+        return joined_line, comments, lines
+
+
+__all__ = ["CharFilter", "InputStream"]
